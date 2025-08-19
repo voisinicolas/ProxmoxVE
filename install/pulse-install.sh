@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Copyright (c) 2021-2025 community-scripts ORG
-# Author: rcourtman
+# Author: rcourtman & vhsdream
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
 # Source: https://github.com/rcourtman/Pulse
 
@@ -21,7 +21,7 @@ $STD apt-get install -y \
 msg_ok "Installed Dependencies"
 
 msg_info "Creating User"
-if useradd -r -m -d /opt/pulse-home -s /bin/bash pulse; then
+if useradd -r -m -d /opt/pulse-home -s /usr/sbin/nologin pulse; then
   msg_ok "Created User"
 else
   msg_error "User creation failed"
@@ -34,7 +34,7 @@ chown -R pulse:pulse /etc/pulse /opt/pulse
 msg_ok "Installed Pulse"
 
 msg_info "Creating Service"
-cat <<EOF >/etc/systemd/system/pulse.service
+cat <<EOF >/etc/systemd/system/pulse-backend.service
 [Unit]
 Description=Pulse Monitoring Server
 After=network.target
@@ -55,7 +55,7 @@ Environment="PULSE_DATA_DIR=/etc/pulse"
 [Install]
 WantedBy=multi-user.target
 EOF
-systemctl enable -q --now pulse
+systemctl enable -q --now pulse-backend
 msg_ok "Created Service"
 
 motd_ssh
