@@ -10,6 +10,93 @@
 > [!CAUTION]
 Exercise vigilance regarding copycat or coat-tailing sites that seek to exploit the project's popularity for potentially malicious purposes.
 
+## 2025-08-23
+
+### 🚀 Updated Scripts
+
+  - #### 🐞 Bug Fixes
+
+    - qBittorrent: Fix file names [@tremor021](https://github.com/tremor021) ([#7136](https://github.com/community-scripts/ProxmoxVE/pull/7136))
+    - Tandoor: Fix env path [@tremor021](https://github.com/tremor021) ([#7130](https://github.com/community-scripts/ProxmoxVE/pull/7130))
+
+  - #### 💥 Breaking Changes
+
+    - Immich: v1.139.2 [@vhsdream](https://github.com/vhsdream) ([#7116](https://github.com/community-scripts/ProxmoxVE/pull/7116))
+
+  - #### 🔧 Refactor
+
+    - Refactor: Pf2eTools [@tremor021](https://github.com/tremor021) ([#7096](https://github.com/community-scripts/ProxmoxVE/pull/7096))
+    - Refactor: Prowlarr [@tremor021](https://github.com/tremor021) ([#7091](https://github.com/community-scripts/ProxmoxVE/pull/7091))
+    - Refactor: Radarr [@tremor021](https://github.com/tremor021) ([#7088](https://github.com/community-scripts/ProxmoxVE/pull/7088))
+    - Refactor: Snipe-IT [@tremor021](https://github.com/tremor021) ([#7081](https://github.com/community-scripts/ProxmoxVE/pull/7081))
+
+## 2025-08-22
+
+### 🚀 Updated Scripts
+
+  - Refactor: Prometheus [@tremor021](https://github.com/tremor021) ([#7093](https://github.com/community-scripts/ProxmoxVE/pull/7093))
+
+  - #### 🐞 Bug Fixes
+
+    - paperless: nltk fix [@MickLesk](https://github.com/MickLesk) ([#7098](https://github.com/community-scripts/ProxmoxVE/pull/7098))
+    - Tududi Fix: use correct tag parsing for release during update check [@vhsdream](https://github.com/vhsdream) ([#7072](https://github.com/community-scripts/ProxmoxVE/pull/7072))
+
+  - #### 🔧 Refactor
+
+    - Refactor: phpIPAM [@tremor021](https://github.com/tremor021) ([#7095](https://github.com/community-scripts/ProxmoxVE/pull/7095))
+    - Refactor: Prometheus Paperless NGX Exporter [@tremor021](https://github.com/tremor021) ([#7092](https://github.com/community-scripts/ProxmoxVE/pull/7092))
+    - Refactor: PS5-MQTT [@tremor021](https://github.com/tremor021) ([#7090](https://github.com/community-scripts/ProxmoxVE/pull/7090))
+    - Refactor: qBittorrent [@tremor021](https://github.com/tremor021) ([#7089](https://github.com/community-scripts/ProxmoxVE/pull/7089))
+    - Refactor: RDTClient [@tremor021](https://github.com/tremor021) ([#7086](https://github.com/community-scripts/ProxmoxVE/pull/7086))
+    - Refactor: Recyclarr [@tremor021](https://github.com/tremor021) ([#7085](https://github.com/community-scripts/ProxmoxVE/pull/7085))
+    - Refactor: RevealJS [@tremor021](https://github.com/tremor021) ([#7084](https://github.com/community-scripts/ProxmoxVE/pull/7084))
+    - Refactor: Rclone [@tremor021](https://github.com/tremor021) ([#7087](https://github.com/community-scripts/ProxmoxVE/pull/7087))
+    - Refactor: Semaphore [@tremor021](https://github.com/tremor021) ([#7083](https://github.com/community-scripts/ProxmoxVE/pull/7083))
+    - Refactor: Silverbullet [@tremor021](https://github.com/tremor021) ([#7082](https://github.com/community-scripts/ProxmoxVE/pull/7082))
+    - Refactor: Plant-it [@tremor021](https://github.com/tremor021) ([#7094](https://github.com/community-scripts/ProxmoxVE/pull/7094))
+    - Refactor: TasmoAdmin [@tremor021](https://github.com/tremor021) ([#7080](https://github.com/community-scripts/ProxmoxVE/pull/7080))
+
+## 2025-08-21
+
+### 🆕 New Scripts
+
+  - LiteLLM ([#7052](https://github.com/community-scripts/ProxmoxVE/pull/7052))
+
+### 🚀 Updated Scripts
+
+  - #### 🐞 Bug Fixes
+
+    - tianji: add uv deps [@MickLesk](https://github.com/MickLesk) ([#7066](https://github.com/community-scripts/ProxmoxVE/pull/7066))
+    - Zitadel: installer for v4 [@MickLesk](https://github.com/MickLesk) ([#7058](https://github.com/community-scripts/ProxmoxVE/pull/7058))
+    - Paperless-NGX: create direction for nltk [@MickLesk](https://github.com/MickLesk) ([#7064](https://github.com/community-scripts/ProxmoxVE/pull/7064))
+    - Immich: hotfix - revert 7035 [@vhsdream](https://github.com/vhsdream) ([#7054](https://github.com/community-scripts/ProxmoxVE/pull/7054))
+    - duplicati: fix release pattern [@MickLesk](https://github.com/MickLesk) ([#7049](https://github.com/community-scripts/ProxmoxVE/pull/7049))
+    - technitiumdns: fix unbound variable [@MickLesk](https://github.com/MickLesk) ([#7047](https://github.com/community-scripts/ProxmoxVE/pull/7047))
+    - [core]: improve binary globbing for gh releases [@MickLesk](https://github.com/MickLesk) ([#7044](https://github.com/community-scripts/ProxmoxVE/pull/7044))
+
+## 2025-08-20
+
+### 🚀 Updated Scripts
+
+  - #### 🐞 Bug Fixes
+
+    - Post-Install, change pve-test for trixie [@MickLesk](https://github.com/MickLesk) ([#7031](https://github.com/community-scripts/ProxmoxVE/pull/7031))
+    - Immich: fix small issue with immich-admin "start" script [@vhsdream](https://github.com/vhsdream) ([#7035](https://github.com/community-scripts/ProxmoxVE/pull/7035))
+    - WasteBin: Small fixes [@tremor021](https://github.com/tremor021) ([#7018](https://github.com/community-scripts/ProxmoxVE/pull/7018))
+    - Komga: Fix update [@tremor021](https://github.com/tremor021) ([#7027](https://github.com/community-scripts/ProxmoxVE/pull/7027))
+    - Barcode Buddy: Fix missing dependency [@tremor021](https://github.com/tremor021) ([#7020](https://github.com/community-scripts/ProxmoxVE/pull/7020))
+    - PBS: ifupdown2 reload [@MickLesk](https://github.com/MickLesk) ([#7013](https://github.com/community-scripts/ProxmoxVE/pull/7013))
+
+  - #### ✨ New Features
+
+    - Feature: Netdata support PVE9 (Debian 13 Trixie) [@MickLesk](https://github.com/MickLesk) ([#7012](https://github.com/community-scripts/ProxmoxVE/pull/7012))
+
+  - #### 🔧 Refactor
+
+    - Refactor: RustDesk Server [@tremor021](https://github.com/tremor021) ([#7008](https://github.com/community-scripts/ProxmoxVE/pull/7008))
+    - ghost: fix: verbose [@CrazyWolf13](https://github.com/CrazyWolf13) ([#7023](https://github.com/community-scripts/ProxmoxVE/pull/7023))
+    - Refactor: Paperless-ngx [@MickLesk](https://github.com/MickLesk) ([#6938](https://github.com/community-scripts/ProxmoxVE/pull/6938))
+
 ## 2025-08-19
 
 ### 🆕 New Scripts
