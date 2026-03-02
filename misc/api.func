@@ -346,18 +346,20 @@ explain_exit_code() {
 # - Handles backslashes, quotes, newlines, tabs, and carriage returns
 # ------------------------------------------------------------------------------
 json_escape() {
-  local s="$1"
-  # Strip ANSI escape sequences (color codes etc.)
-  s=$(printf '%s' "$s" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g')
-  s=${s//\\/\\\\}
-  s=${s//"/\\"/}
-  s=${s//$'\n'/\\n}
-  s=${s//$'\r'/}
-  s=${s//$'\t'/\\t}
-  # Remove any remaining control characters (0x00-0x1F except those already handled)
-  # Also remove DEL (0x7F) and invalid high bytes that break JSON parsers
-  s=$(printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037\177')
-  printf '%s' "$s"
+  # Escape a string for safe JSON embedding using awk (handles any input size).
+  # Pipeline: strip ANSI → remove control chars → escape \ " TAB → join lines with \n
+  printf '%s' "$1" \
+    | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' \
+    | tr -d '\000-\010\013\014\016-\037\177\r' \
+    | awk '
+        BEGIN { ORS = "" }
+        {
+          gsub(/\\/, "\\\\")   # backslash → \\
+          gsub(/"/, "\\\"")    # double quote → \"
+          gsub(/\t/, "\\t")   # tab → \t
+          if (NR > 1) printf "\\n"
+          printf "%s", $0
+        }'
 }
 
 # ------------------------------------------------------------------------------
