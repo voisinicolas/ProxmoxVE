@@ -2,20 +2,28 @@
 
 import type { z } from "zod";
 
+import { githubGist, nord } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import { CalendarIcon, Check, Clipboard, Download } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import SyntaxHighlighter from "react-syntax-highlighter";
+import { useTheme } from "next-themes";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import Image from "next/image";
 
 import type { Category } from "@/lib/types";
 
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Calendar } from "@/components/ui/calendar";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { basePath } from "@/config/site-config";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { fetchCategories } from "@/lib/data";
@@ -23,16 +31,45 @@ import { cn } from "@/lib/utils";
 
 import type { Script } from "./_schemas/schemas";
 
+import { ScriptItem } from "../scripts/_components/script-item";
 import InstallMethod from "./_components/install-method";
 import { ScriptSchema } from "./_schemas/schemas";
 import Categories from "./_components/categories";
 import Note from "./_components/note";
 
+function search(scripts: Script[], query: string): Script[] {
+  const queryLower = query.toLowerCase().trim();
+  const searchWords = queryLower.split(/\s+/).filter(Boolean);
+
+  return scripts
+    .map((script) => {
+      const nameLower = script.name.toLowerCase();
+      const descriptionLower = (script.description || "").toLowerCase();
+
+      let score = 0;
+
+      for (const word of searchWords) {
+        if (nameLower.includes(word)) {
+          score += 10;
+        }
+        if (descriptionLower.includes(word)) {
+          score += 5;
+        }
+      }
+
+      return { script, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 20)
+    .map(({ script }) => script);
+}
+
 const initialScript: Script = {
   name: "",
   slug: "",
   categories: [],
-  date_created: "",
+  date_created: format(new Date(), "yyyy-MM-dd"),
   type: "ct",
   updateable: false,
   privileged: false,
@@ -42,6 +79,8 @@ const initialScript: Script = {
   website: null,
   logo: null,
   description: "",
+  disable: undefined,
+  disable_description: undefined,
   install_methods: [],
   default_credentials: {
     username: null,
@@ -51,17 +90,53 @@ const initialScript: Script = {
 };
 
 export default function JSONGenerator() {
+  const { theme } = useTheme();
   const [script, setScript] = useState<Script>(initialScript);
   const [isCopied, setIsCopied] = useState(false);
   const [isValid, setIsValid] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [currentTab, setCurrentTab] = useState<"json" | "preview">("json");
+  const [selectedCategory, setSelectedCategory] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [zodErrors, setZodErrors] = useState<z.ZodError | null>(null);
+
+  const selectedCategoryObj = useMemo(
+    () => categories.find(cat => cat.id.toString() === selectedCategory),
+    [categories, selectedCategory],
+  );
+
+  const allScripts = useMemo(
+    () => categories.flatMap(cat => cat.scripts || []),
+    [categories],
+  );
+
+  const scripts = useMemo(() => {
+    const query = searchQuery.trim();
+
+    if (query) {
+      return search(allScripts, query);
+    }
+
+    if (selectedCategoryObj) {
+      return selectedCategoryObj.scripts || [];
+    }
+
+    return [];
+  }, [allScripts, selectedCategoryObj, searchQuery]);
 
   useEffect(() => {
     fetchCategories()
       .then(setCategories)
       .catch(error => console.error("Error fetching categories:", error));
   }, []);
+
+  useEffect(() => {
+    if (!isValid && currentTab === "preview") {
+      setCurrentTab("json");
+      toast.error("Switched to JSON tab due to invalid configuration.");
+    }
+  }, [isValid, currentTab]);
 
   const updateScript = useCallback((key: keyof Script, value: Script[keyof Script]) => {
     setScript((prev) => {
@@ -99,13 +174,69 @@ export default function JSONGenerator() {
   }, []);
 
   const handleCopy = useCallback(() => {
+    if (!isValid)
+      toast.warning("JSON schema is invalid. Copying anyway.");
     navigator.clipboard.writeText(JSON.stringify(script, null, 2));
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
-    toast.success("Copied metadata to clipboard");
+    if (isValid)
+      toast.success("Copied metadata to clipboard");
   }, [script]);
 
+  const importScript = (script: Script) => {
+    try {
+      const result = ScriptSchema.safeParse(script);
+      if (!result.success) {
+        setIsValid(false);
+        setZodErrors(result.error);
+        toast.error("Imported JSON is invalid according to the schema.");
+        return;
+      }
+
+      setScript(result.data);
+      setIsValid(true);
+      setZodErrors(null);
+      toast.success("Imported JSON successfully");
+    }
+    catch (error) {
+      toast.error("Failed to read or parse the JSON file.");
+    }
+  };
+
+  const handleFileImport = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json";
+
+    input.onchange = (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      const file = target.files?.[0];
+      if (!file)
+        return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const content = event.target?.result as string;
+          const parsed = JSON.parse(content);
+          importScript(parsed);
+          toast.success("Imported JSON successfully");
+        }
+        catch (error) {
+          toast.error("Failed to read the JSON file.");
+        }
+      };
+      reader.readAsText(file);
+    };
+
+    input.click();
+  }, [setScript]);
+
   const handleDownload = useCallback(() => {
+    if (isValid === false) {
+      toast.error("Cannot download invalid JSON");
+      return;
+    }
     const jsonString = JSON.stringify(script, null, 2);
     const blob = new Blob([jsonString], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -143,7 +274,7 @@ export default function JSONGenerator() {
         </AlertDescription>
         {zodErrors && (
           <div className="mt-2 space-y-1">
-            {zodErrors.errors.map((error, index) => (
+            {zodErrors.issues.map((error, index) => (
               <AlertDescription key={index} className="p-1 text-red-500">
                 {error.path.join(".")}
                 {" "}
@@ -161,7 +292,98 @@ export default function JSONGenerator() {
   return (
     <div className="flex h-screen mt-20">
       <div className="w-1/2 p-4 overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-4">JSON Generator</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-2xl font-bold">JSON Generator</h2>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button>Import</Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-52" align="start">
+              <DropdownMenuGroup>
+                <DropdownMenuItem onSelect={handleFileImport}>Import local JSON file</DropdownMenuItem>
+                <Dialog
+                  open={isImportDialogOpen}
+                  onOpenChange={setIsImportDialogOpen}
+                >
+                  <DialogTrigger asChild>
+                    <DropdownMenuItem onSelect={e => e.preventDefault()}>
+                      Import existing script
+                    </DropdownMenuItem>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md w-full">
+                    <DialogHeader>
+                      <DialogTitle>Import existing script</DialogTitle>
+                      <DialogDescription>
+                        Select one of the puplished scripts to import its metadata.
+                      </DialogDescription>
+
+                    </DialogHeader>
+                    <div className="flex items-center gap-2">
+                      <div className="grid flex-1 gap-2">
+                        <Select
+                          value={selectedCategory}
+                          onValueChange={setSelectedCategory}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Category" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {categories.map(category => (
+                              <SelectItem key={category.id} value={category.id.toString()}>
+                                {category.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          placeholder="Search for a script..."
+                          value={searchQuery}
+                          onChange={e => setSearchQuery(e.target.value)}
+                        />
+                        {!selectedCategory && !searchQuery
+                          ? (
+                              <p className="text-muted-foreground text-sm text-center">
+                                Select a category or search for a script
+                              </p>
+                            )
+                          : scripts.length === 0
+                            ? (
+                                <p className="text-muted-foreground text-sm text-center">
+                                  No scripts found
+                                </p>
+                              )
+                            : (
+                                <div className="grid grid-cols-3 auto-rows-min h-64 overflow-y-auto gap-4">
+                                  {scripts.map(script => (
+                                    <div
+                                      key={script.slug}
+                                      className="p-2 border rounded cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                                      onClick={() => {
+                                        importScript(script);
+                                        setIsImportDialogOpen(false);
+                                      }}
+                                    >
+                                      <Image
+                                        src={script.logo || `/${basePath}/logo.png`}
+                                        alt={script.name}
+                                        className="w-full h-12 object-contain mb-2"
+                                        width={16}
+                                        height={16}
+                                        unoptimized
+                                      />
+                                      <p className="text-sm text-center">{script.name}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         <form className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -184,8 +406,6 @@ export default function JSONGenerator() {
           <div>
             <Label>
               Logo
-              {" "}
-              <span className="text-red-500">*</span>
             </Label>
             <Input
               placeholder="Full logo URL"
@@ -198,7 +418,7 @@ export default function JSONGenerator() {
             <Input
               placeholder="Path to config file"
               value={script.config_path || ""}
-              onChange={e => updateScript("config_path", e.target.value || null)}
+              onChange={e => updateScript("config_path", e.target.value || "")}
             />
           </div>
           <div>
@@ -216,7 +436,11 @@ export default function JSONGenerator() {
           <Categories script={script} setScript={setScript} categories={categories} />
           <div className="flex gap-2">
             <div className="flex flex-col gap-2 w-full">
-              <Label>Date Created</Label>
+              <Label>
+                Date Created
+                {" "}
+                <span className="text-red-500">*</span>
+              </Label>
               <Popover>
                 <PopoverTrigger asChild className="flex-1">
                   <Button
@@ -232,7 +456,7 @@ export default function JSONGenerator() {
                     mode="single"
                     selected={new Date(script.date_created)}
                     onSelect={handleDateSelect}
-                    initialFocus
+                    autoFocus
                   />
                 </PopoverContent>
               </Popover>
@@ -261,7 +485,28 @@ export default function JSONGenerator() {
               <Switch checked={script.privileged} onCheckedChange={checked => updateScript("privileged", checked)} />
               <label>Privileged</label>
             </div>
+            <div className="flex items-center space-x-2">
+              <Switch
+                checked={script.disable || false}
+                onCheckedChange={checked => updateScript("disable", checked)}
+              />
+              <label>Disabled</label>
+            </div>
           </div>
+          {script.disable && (
+            <div>
+              <Label>
+                Disable Description
+                {" "}
+                <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                placeholder="Explain why this script is disabled..."
+                value={script.disable_description || ""}
+                onChange={e => updateScript("disable_description", e.target.value)}
+              />
+            </div>
+          )}
           <Input
             placeholder="Interface Port"
             type="number"
@@ -304,21 +549,41 @@ export default function JSONGenerator() {
         </form>
       </div>
       <div className="w-1/2 p-4 bg-background overflow-y-auto">
-        {validationAlert}
-        <div className="relative">
-          <div className="absolute right-2 top-2 flex gap-1">
-            <Button size="icon" variant="outline" onClick={handleCopy}>
-              {isCopied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
-            </Button>
-            <Button size="icon" variant="outline" onClick={handleDownload}>
-              <Download className="h-4 w-4" />
-            </Button>
-          </div>
+        <Tabs
+          defaultValue="json"
+          className="w-full"
+          onValueChange={value => setCurrentTab(value as "json" | "preview")}
+          value={currentTab}
+        >
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="json">JSON</TabsTrigger>
+            <TabsTrigger disabled={!isValid} value="preview">Preview</TabsTrigger>
+          </TabsList>
+          <TabsContent value="json" className="h-full w-full">
+            {validationAlert}
+            <div className="relative">
+              <div className="absolute right-2 top-2 flex gap-1">
+                <Button size="icon" variant="outline" onClick={handleCopy}>
+                  {isCopied ? <Check className="h-4 w-4" /> : <Clipboard className="h-4 w-4" />}
+                </Button>
+                <Button size="icon" variant="outline" onClick={handleDownload}>
+                  <Download className="h-4 w-4" />
+                </Button>
+              </div>
 
-          <pre className="mt-4 p-4 bg-secondary rounded shadow overflow-x-scroll">
-            {JSON.stringify(script, null, 2)}
-          </pre>
-        </div>
+              <SyntaxHighlighter
+                language="json"
+                style={theme === "light" ? githubGist : nord}
+                className="mt-4 p-4 bg-secondary rounded shadow overflow-x-scroll"
+              >
+                {JSON.stringify(script, null, 2)}
+              </SyntaxHighlighter>
+            </div>
+          </TabsContent>
+          <TabsContent value="preview" className="h-full w-full">
+            <ScriptItem item={script} />
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

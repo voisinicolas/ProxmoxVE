@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-# Copyright (c) 2021-2025 community-scripts ORG
+# Copyright (c) 2021-2026 community-scripts ORG
 # Author: TheRealVira
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
-# Source: https://pf2etools.com/
+# Source: https://pf2etools.com/ | Github: https://github.com/Pf2eToolsOrg/Pf2eTools
 
 source /dev/stdin <<<"$FUNCTIONS_FILE_PATH"
 color
@@ -14,7 +14,7 @@ network_check
 update_os
 
 msg_info "Installing Dependencies"
-$STD apt-get install -y \
+$STD apt install -y \
   apache2 \
   ca-certificates \
   git
@@ -42,11 +42,6 @@ ln -s "/opt/Pf2eTools" /var/www/html
 chown -R www-data: "/opt/Pf2eTools"
 chmod -R 755 "/opt/Pf2eTools"
 msg_ok "Created Service"
-
-msg_info "Cleaning up"
-$STD apt-get -y autoremove
-$STD apt-get -y autoclean
-msg_ok "Cleaned"
-
+cleanup_lxc
 motd_ssh
 customize

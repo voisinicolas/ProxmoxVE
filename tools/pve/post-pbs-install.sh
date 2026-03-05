@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright (c) 2021-2025 community-scripts ORG
+# Copyright (c) 2021-2026 community-scripts ORG
 # Author: tteck (tteckster) | MickLesk (CanbiZ) | thost96
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
 
@@ -31,6 +31,10 @@ shopt -s inherit_errexit nullglob
 msg_info() { echo -ne " ${HOLD} ${YW}$1..."; }
 msg_ok() { echo -e "${BFR} ${CM} ${GN}$1${CL}"; }
 msg_error() { echo -e "${BFR} ${CROSS} ${RD}$1${CL}"; }
+
+# Telemetry
+source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/api.func) 2>/dev/null || true
+declare -f init_tool_telemetry &>/dev/null && init_tool_telemetry "post-pbs-install" "pve"
 
 # ---- helpers ----
 get_pbs_codename() {
@@ -79,7 +83,7 @@ main() {
 
   if command -v pveversion >/dev/null 2>&1; then
     echo -e "\n🛑  PVE Detected, Wrong Script!\n"
-    exit 1
+    exit 232
   fi
 
   local CODENAME
@@ -91,7 +95,7 @@ main() {
   *)
     msg_error "Unsupported Debian codename: $CODENAME"
     echo -e "Supported: bookworm (PBS 3.x) and trixie (PBS 4.x)"
-    exit 1
+    exit 105
     ;;
   esac
 }
@@ -173,21 +177,15 @@ start_routines_4() {
     sed -i '/proxmox/d;/bookworm/d' /etc/apt/sources.list || true
     cat >/etc/apt/sources.list.d/debian.sources <<EOF
 Types: deb
-URIs: http://deb.debian.org/debian
-Suites: trixie
-Components: main contrib
+URIs: http://deb.debian.org/debian/
+Suites: trixie trixie-updates
+Components: main contrib non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
 Types: deb
-URIs: http://security.debian.org/debian-security
+URIs: http://security.debian.org/debian-security/
 Suites: trixie-security
-Components: main contrib
-Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-
-Types: deb
-URIs: http://deb.debian.org/debian
-Suites: trixie-updates
-Components: main contrib
+Components: main contrib non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
     msg_ok "Corrected Debian Sources"
@@ -204,7 +202,13 @@ You normally need a valid subscription for this.
 Disable it (recommended)?" 14 58 2 "yes" " " "no" " " 3>&2 2>&1 1>&3)
     case $CHOICE in
     yes)
-      sed -i '/pbs-enterprise/ s/^/# /' /etc/apt/sources.list.d/pbs-enterprise.sources
+      msg_info "Disabling 'pbs-enterprise' repository"
+      # Use Enabled: false instead of commenting to avoid malformed entry
+      if grep -q "^Enabled:" /etc/apt/sources.list.d/pbs-enterprise.sources 2>/dev/null; then
+        sed -i 's/^Enabled:.*/Enabled: false/' /etc/apt/sources.list.d/pbs-enterprise.sources
+      else
+        echo "Enabled: false" >>/etc/apt/sources.list.d/pbs-enterprise.sources
+      fi
       msg_ok "Disabled 'pbs-enterprise' repository"
       ;;
     no)
@@ -213,11 +217,12 @@ Disable it (recommended)?" 14 58 2 "yes" " " "no" " " 3>&2 2>&1 1>&3)
     esac
   else
     cat >/etc/apt/sources.list.d/pbs-enterprise.sources <<EOF
-# Types: deb
-# URIs: https://enterprise.proxmox.com/debian/pbs
-# Suites: trixie
-# Components: pbs-enterprise
-# Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+Types: deb
+URIs: https://enterprise.proxmox.com/debian/pbs
+Suites: trixie
+Components: pbs-enterprise
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+Enabled: false
 EOF
     msg_ok "Added 'pbs-enterprise' repository (disabled)"
   fi
@@ -239,11 +244,12 @@ EOF
   # --- Test repo (pbs-test, renamed) ---
   if ! component_exists_in_sources "pbs-test"; then
     cat >/etc/apt/sources.list.d/pbs-test.sources <<EOF
-# Types: deb
-# URIs: http://download.proxmox.com/debian/pbs
-# Suites: trixie
-# Components: pbs-test
-# Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+Types: deb
+URIs: http://download.proxmox.com/debian/pbs
+Suites: trixie
+Components: pbs-test
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+Enabled: false
 EOF
     msg_ok "Added 'pbs-test' repository (disabled)"
   else

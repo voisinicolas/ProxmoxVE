@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright (c) 2021-2025 tteck
+# Copyright (c) 2021-2026 tteck
 # Author: tteck (tteckster)
 # License: MIT
 # https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
@@ -64,14 +64,15 @@ THIN="discard=on,ssd=1,"
 set -e
 trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
 trap cleanup EXIT
-trap 'post_update_to_api "failed" "INTERRUPTED"' SIGINT
-trap 'post_update_to_api "failed" "TERMINATED"' SIGTERM
+trap 'post_update_to_api "failed" "130"' SIGINT
+trap 'post_update_to_api "failed" "143"' SIGTERM
+trap 'post_update_to_api "failed" "129"; exit 129' SIGHUP
 function error_handler() {
   local exit_code="$?"
   local line_number="$1"
   local command="$2"
   local error_message="${RD}[ERROR]${CL} in line ${RD}$line_number${CL}: exit code ${RD}$exit_code${CL}: while executing command ${YW}$command${CL}"
-  post_update_to_api "failed" "${command}"
+  post_update_to_api "failed" "${exit_code}"
   echo -e "\n$error_message\n"
   cleanup_vmid
 }
@@ -101,8 +102,15 @@ function cleanup_vmid() {
 }
 
 function cleanup() {
+  local exit_code=$?
   popd >/dev/null
-  post_update_to_api "done" "none"
+  if [[ "${POST_TO_API_DONE:-}" == "true" && "${POST_UPDATE_DONE:-}" != "true" ]]; then
+    if [[ $exit_code -eq 0 ]]; then
+      post_update_to_api "done" "none"
+    else
+      post_update_to_api "failed" "$exit_code"
+    fi
+  fi
   rm -rf $TEMP_DIR
 }
 
@@ -140,7 +148,7 @@ function check_root() {
 }
 
 # This function checks the version of Proxmox Virtual Environment (PVE) and exits if the version is not supported.
-# Supported: Proxmox VE 8.0.x – 8.9.x and 9.0 (NOT 9.1+)
+# Supported: Proxmox VE 8.0.x – 8.9.x, 9.0 and 9.1
 pve_check() {
   local PVE_VER
   PVE_VER="$(pveversion | awk -F'/' '{print $2}' | awk -F'-' '{print $1}')"
@@ -151,26 +159,26 @@ pve_check() {
     if ((MINOR < 0 || MINOR > 9)); then
       msg_error "This version of Proxmox VE is not supported."
       msg_error "Supported: Proxmox VE version 8.0 – 8.9"
-      exit 1
+      exit 105
     fi
     return 0
   fi
 
-  # Check for Proxmox VE 9.x: allow ONLY 9.0
+  # Check for Proxmox VE 9.x: allow 9.0 and 9.1
   if [[ "$PVE_VER" =~ ^9\.([0-9]+) ]]; then
     local MINOR="${BASH_REMATCH[1]}"
-    if ((MINOR != 0)); then
-      msg_error "This version of Proxmox VE is not yet supported."
-      msg_error "Supported: Proxmox VE version 9.0"
-      exit 1
+    if ((MINOR < 0 || MINOR > 1)); then
+      msg_error "This version of Proxmox VE is not supported."
+      msg_error "Supported: Proxmox VE version 9.0 – 9.1"
+      exit 105
     fi
     return 0
   fi
 
   # All other unsupported versions
   msg_error "This version of Proxmox VE is not supported."
-  msg_error "Supported versions: Proxmox VE 8.0 – 8.x or 9.0"
-  exit 1
+  msg_error "Supported versions: Proxmox VE 8.0 – 8.x or 9.0 – 9.1"
+  exit 105
 }
 
 function arch_check() {
@@ -237,31 +245,62 @@ function default_settings() {
 
 function get_mikrotik_version() {
   local mode="$1"
+  local rss_url
   local tree_name
+
+  case "$mode" in
+  s) rss_url="https://cdn.mikrotik.com/routeros/latest-stable.rss" ;;
+  d) rss_url="https://cdn.mikrotik.com/routeros/latest-development.rss" ;;
+  l) rss_url="https://cdn.mikrotik.com/routeros/latest-long-term.rss" ;;
+  t) rss_url="https://cdn.mikrotik.com/routeros/latest-testing.rss" ;;
+  *) return 0 ;;
+  esac
+
+  local rss_content
+  rss_content=$(curl -fsSL $rss_url 2>/dev/null)
+  if [ -n "$rss_content" ]; then
+    local version
+    version=$(echo "$rss_content" | grep -oP '<title>RouterOS \K[0-9.]+(?= \[)' 2>/dev/null || echo "$rss_content" | sed -n 's/.*<title>RouterOS \([0-9.]\+\) \[.*/\1/p' 2>/dev/null)
+    if [[ "$version" =~ ^[0-9]+\.[0-9]+ ]]; then
+      echo "$version"
+      return 0
+    fi
+  fi
 
   case "$mode" in
   s) tree_name="Stable release tree" ;;
   d) tree_name="Development release tree" ;;
   l) tree_name="Long-term release tree" ;;
   t) tree_name="Testing release tree" ;;
-  *) return 0 ;; # not an error, just no-op
   esac
 
   local html
-  html=$(curl -fsSL "https://mikrotik.com/download/changelogs") || return 0
-  [ -z "$html" ] && return 0
+  html=$(curl -fsSL "https://mikrotik.com/download/changelogs" 2>/dev/null)
+  if [ -n "$html" ]; then
+    local start_line
+    start_line=$(echo "$html" | grep -n "$tree_name" | cut -d: -f1 | head -n1)
+    if [[ "$start_line" =~ ^[0-9]+$ ]]; then
+      local line
+      line=$(echo "$html" | tail -n +"$start_line" | grep -m 1 -E "c-(stable|longTerm|testing|development)-v|RouterOS [0-9]+\.[0-9]+" 2>/dev/null)
 
-  local start_line
-  start_line=$(echo "$html" | grep -n "$tree_name$" | cut -d: -f1 | head -n1)
-  [[ "$start_line" =~ ^[0-9]+$ ]] || return 0
+      local version
+      version=$(echo "$line" | sed -n 's/.*c-[^"]*-v\([0-9_.a-zA-Z-]\+\).*/\1/p' | tr '_' '.' 2>/dev/null)
+      [ -z "$version" ] && version=$(echo "$line" | grep -oP 'RouterOS \K[0-9]+\.[0-9]+(\.[0-9]+)?' 2>/dev/null)
 
-  local line
-  line=$( (echo "$html" | tail -n +"$start_line" | grep -m 1 "c-\(stable\|longTerm\|testing\|development\)-v") 2>/dev/null || true)
+      if [[ "$version" =~ ^[0-9]+\.[0-9]+ ]]; then
+        echo "$version"
+        return 0
+      fi
+    fi
+  fi
 
-  local version
-  version=$(echo "$line" | sed -n 's/.*c-[^"]*-v\([0-9_.a-zA-Z-]\+\).*/\1/p' | tr '_' '.')
-
-  [[ "$version" =~ ^[0-9]+\.[0-9]+.*$ ]] && echo "$version"
+  for minor in $(seq 50 -1 15); do
+    local test_version="7.${minor}"
+    if curl -fsSL -I "https://download.mikrotik.com/routeros/${test_version}/chr-${test_version}.img.zip" 2>/dev/null | grep -q "200 OK"; then
+      echo "$test_version"
+      return 0
+    fi
+  done
 
   return 0
 }
@@ -504,8 +543,8 @@ if [ -n "$MIK_VER" ]; then
   msg_ok "Latest stable version: ${CL}${BL}$MIK_VER${CL}."
 else
   msg_error "Could not get latest version"
-  msg_ok "Defaulting to version 7.19"
-  ver="7.19"
+  msg_ok "Defaulting to version 7.20"
+  MIK_VER="7.20"
 fi
 
 URL=https://download.mikrotik.com/routeros/$MIK_VER/chr-$MIK_VER.img.zip
@@ -531,6 +570,11 @@ btrfs)
   DISK_IMPORT="-format raw"
   ;;
 zfspool)
+  DISK_EXT=""
+  DISK_REF=""
+  DISK_IMPORT="-format raw"
+  ;;
+*)
   DISK_EXT=""
   DISK_REF=""
   DISK_IMPORT="-format raw"
@@ -580,7 +624,7 @@ DESCRIPTION=$(
 </div>
 EOF
 )
-qm set "$VMID" -description "$DESCRIPTION" >/dev/null
+qm set $VMID -description "$DESCRIPTION" >/dev/null
 if [ -n "$DISK_SIZE" ]; then
   msg_info "Resizing disk to $DISK_SIZE GB"
   qm resize $VMID scsi0 ${DISK_SIZE} >/dev/null
@@ -596,4 +640,4 @@ if [ "$START_VM" == "yes" ]; then
   msg_ok "Started Mikrotik RouterOS CHR VM"
 fi
 post_update_to_api "done" "none"
-msg_ok "Completed Successfully!\n"
+msg_ok "Completed successfully!\n"

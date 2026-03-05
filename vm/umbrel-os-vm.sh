@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright (c) 2021-2025 community-scripts ORG
+# Copyright (c) 2021-2026 community-scripts ORG
 # Author: MickLesk (CanbiZ)
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
 
@@ -35,7 +35,6 @@ GN=$(echo "\033[1;92m")
 DGN=$(echo "\033[32m")
 CL=$(echo "\033[m")
 
-CL=$(echo "\033[m")
 BOLD=$(echo "\033[1m")
 BFR="\\r\\033[K"
 HOLD=" "
@@ -63,14 +62,15 @@ THIN="discard=on,ssd=1,"
 set -e
 trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
 trap cleanup EXIT
-trap 'post_update_to_api "failed" "INTERRUPTED"' SIGINT
-trap 'post_update_to_api "failed" "TERMINATED"' SIGTERM
+trap 'post_update_to_api "failed" "130"' SIGINT
+trap 'post_update_to_api "failed" "143"' SIGTERM
+trap 'post_update_to_api "failed" "129"; exit 129' SIGHUP
 function error_handler() {
   local exit_code="$?"
   local line_number="$1"
   local command="$2"
   local error_message="${RD}[ERROR]${CL} in line ${RD}$line_number${CL}: exit code ${RD}$exit_code${CL}: while executing command ${YW}$command${CL}"
-  post_update_to_api "failed" "${command}"
+  post_update_to_api "failed" "${exit_code}"
   echo -e "\n$error_message\n"
   cleanup_vmid
 }
@@ -100,8 +100,15 @@ function cleanup_vmid() {
 }
 
 function cleanup() {
+  local exit_code=$?
   popd >/dev/null
-  post_update_to_api "done" "none"
+  if [[ "${POST_TO_API_DONE:-}" == "true" && "${POST_UPDATE_DONE:-}" != "true" ]]; then
+    if [[ $exit_code -eq 0 ]]; then
+      post_update_to_api "done" "none"
+    else
+      post_update_to_api "failed" "$exit_code"
+    fi
+  fi
   rm -rf $TEMP_DIR
 }
 
@@ -139,7 +146,7 @@ function check_root() {
 }
 
 # This function checks the version of Proxmox Virtual Environment (PVE) and exits if the version is not supported.
-# Supported: Proxmox VE 8.0.x – 8.9.x and 9.0 (NOT 9.1+)
+# Supported: Proxmox VE 8.0.x – 8.9.x, 9.0 and 9.1
 pve_check() {
   local PVE_VER
   PVE_VER="$(pveversion | awk -F'/' '{print $2}' | awk -F'-' '{print $1}')"
@@ -150,26 +157,26 @@ pve_check() {
     if ((MINOR < 0 || MINOR > 9)); then
       msg_error "This version of Proxmox VE is not supported."
       msg_error "Supported: Proxmox VE version 8.0 – 8.9"
-      exit 1
+      exit 105
     fi
     return 0
   fi
 
-  # Check for Proxmox VE 9.x: allow ONLY 9.0
+  # Check for Proxmox VE 9.x: allow 9.0 and 9.1
   if [[ "$PVE_VER" =~ ^9\.([0-9]+) ]]; then
     local MINOR="${BASH_REMATCH[1]}"
-    if ((MINOR != 0)); then
-      msg_error "This version of Proxmox VE is not yet supported."
-      msg_error "Supported: Proxmox VE version 9.0"
-      exit 1
+    if ((MINOR < 0 || MINOR > 1)); then
+      msg_error "This version of Proxmox VE is not supported."
+      msg_error "Supported: Proxmox VE version 9.0 – 9.1"
+      exit 105
     fi
     return 0
   fi
 
   # All other unsupported versions
   msg_error "This version of Proxmox VE is not supported."
-  msg_error "Supported versions: Proxmox VE 8.0 – 8.x or 9.0"
-  exit 1
+  msg_error "Supported versions: Proxmox VE 8.0 – 8.x or 9.0 – 9.1"
+  exit 105
 }
 
 function arch_check() {
@@ -199,6 +206,69 @@ function exit-script() {
   clear
   echo -e "\n${CROSS}${RD}User exited script${CL}\n"
   exit
+}
+
+# Ensure pv is installed or abort with instructions
+function ensure_pv() {
+  if ! command -v pv &>/dev/null; then
+    msg_info "Installing required package: pv"
+    if ! apt-get update -qq &>/dev/null || ! apt-get install -y pv &>/dev/null; then
+      msg_error "Failed to install pv automatically."
+      echo -e "\nPlease run manually on the Proxmox host:\n  apt install pv\n"
+      exit 237
+    fi
+    msg_ok "Installed pv"
+  fi
+}
+
+# Download an .xz file and validate it
+# Args: $1=url $2=cache_file
+function download_and_validate_xz() {
+  local url="$1"
+  local file="$2"
+
+  # If file exists, check validity
+  if [[ -s "$file" ]]; then
+    if xz -t "$file" &>/dev/null; then
+      msg_ok "Using cached image $(basename "$file")"
+      return 0
+    else
+      msg_error "Cached file $(basename "$file") is corrupted. Deleting and retrying download..."
+      rm -f "$file"
+    fi
+  fi
+
+  # Download fresh file
+  msg_info "Downloading image: $(basename "$file")"
+  if ! curl -fSL -o "$file" "$url"; then
+    msg_error "Download failed: $url"
+    rm -f "$file"
+    exit 115
+  fi
+
+  # Validate again
+  if ! xz -t "$file" &>/dev/null; then
+    msg_error "Downloaded file $(basename "$file") is corrupted. Please try again later."
+    rm -f "$file"
+    exit 115
+  fi
+  msg_ok "Downloaded and validated $(basename "$file")"
+}
+
+# Extract .xz with pv
+# Args: $1=cache_file $2=target_img
+function extract_xz_with_pv() {
+  set -o pipefail
+  local file="$1"
+  local target="$2"
+
+  msg_info "Decompressing $(basename "$file") to $target"
+  if ! xz -dc "$file" | pv -N "Extracting" >"$target"; then
+    msg_error "Failed to extract $file"
+    rm -f "$target"
+    exit 115
+  fi
+  msg_ok "Decompressed to $target"
 }
 
 function default_settings() {
@@ -432,6 +502,7 @@ check_root
 arch_check
 pve_check
 ssh_check
+ensure_pv
 start_script
 
 msg_info "Validating Storage"
@@ -443,7 +514,7 @@ done < <(pvesm status -content images | awk 'NR>1 {printf "%s %s %s\n", $1, $2, 
 
 if [ ${#STORAGE_MENU[@]} -eq 0 ]; then
   msg_error "Unable to detect a valid storage location."
-  exit 1
+  exit 119
 elif [ $((${#STORAGE_MENU[@]} / 3)) -eq 1 ]; then
   STORAGE=${STORAGE_MENU[0]}
 else
@@ -465,23 +536,13 @@ FILE_IMG="/var/lib/vz/template/tmp/${CACHE_FILE##*/%.xz}"
 
 mkdir -p "$CACHE_DIR" "$(dirname "$FILE_IMG")"
 
-if [[ ! -s "$CACHE_FILE" ]]; then
-  msg_ok "Downloading Umbrel OS image"
-  curl -f#SL -o "$CACHE_FILE" "$URL"
-else
-  msg_ok "Using cached Umbrel OS image"
-fi
+download_and_validate_xz "$URL" "$CACHE_FILE"
 
-if ! command -v pv &>/dev/null; then
-  apt-get update -qq &>/dev/null && apt-get install -y pv &>/dev/null
-fi
-
-set -o pipefail
-qm create "$VMID" -machine q35 -bios ovmf -agent 1 -tablet 0 -localtime 1 ${CPU_TYPE} \
+qm create $VMID -machine q35 -bios ovmf -agent 1 -tablet 0 -localtime 1 ${CPU_TYPE} \
   -cores "$CORE_COUNT" -memory "$RAM_SIZE" -name "$HN" -tags community-script \
   -net0 "virtio,bridge=$BRG,macaddr=$MAC$VLAN$MTU" -onboot 1 -ostype l26 -scsihw virtio-scsi-pci >/dev/null
 
-xz -dc "$CACHE_FILE" | pv -N "Extracting" >"$FILE_IMG"
+extract_xz_with_pv "$CACHE_FILE" "$FILE_IMG"
 
 if qm disk import --help >/dev/null 2>&1; then
   IMPORT_CMD=(qm disk import)
@@ -492,13 +553,13 @@ IMPORT_OUT="$("${IMPORT_CMD[@]}" "$VMID" "$FILE_IMG" "$STORAGE" --format raw 2>&
 DISK_REF="$(printf '%s\n' "$IMPORT_OUT" | sed -n "s/.*imported disk '\([^']\+\)'.*/\1/p" | tr -d "\r\"'")"
 [[ -z "$DISK_REF" ]] && DISK_REF="$(pvesm list "$STORAGE" | awk -v id="$VMID" '$5 ~ ("vm-"id"-disk-") {print $1":"$5}' | sort | tail -n1)"
 
-qm set "$VMID" \
-  --efidisk0 "${STORAGE}:0,efitype=4m" \
-  --scsi0 "${DISK_REF},ssd=1,discard=on" \
+qm set $VMID \
+  --efidisk0 ${STORAGE}:0,efitype=4m \
+  --scsi0 ${DISK_REF},ssd=1,discard=on \
   --boot order=scsi0 \
   --serial0 socket >/dev/null
-qm set "$VMID" --agent enabled=1 >/dev/null
-qm resize "$VMID" scsi0 "${DISK_SIZE}" >/dev/null
+qm set $VMID --agent enabled=1 >/dev/null
+qm resize $VMID scsi0 ${DISK_SIZE} >/dev/null
 
 DESCRIPTION=$(
   cat <<EOF
@@ -530,7 +591,7 @@ DESCRIPTION=$(
 </div>
 EOF
 )
-qm set "$VMID" -description "$DESCRIPTION" >/dev/null
+qm set $VMID -description "$DESCRIPTION" >/dev/null
 
 if whiptail --backtitle "Proxmox VE Helper Scripts" --title "Image Cache" \
   --yesno "Keep downloaded Umbrel OS image for future VMs?\n\nFile: $CACHE_FILE" 10 70; then
@@ -548,4 +609,4 @@ if [ "$START_VM" == "yes" ]; then
   msg_ok "Started Umbrel OS VM"
 fi
 post_update_to_api "done" "none"
-msg_ok "Completed Successfully!\n"
+msg_ok "Completed successfully!\n"

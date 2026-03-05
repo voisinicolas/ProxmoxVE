@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright (c) 2021-2025 tteck
+# Copyright (c) 2021-2026 tteck
 # Author: tteck (tteckster)
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
 
@@ -67,14 +67,15 @@ THIN="discard=on,ssd=1,"
 set -e
 trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
 trap cleanup EXIT
-trap 'post_update_to_api "failed" "INTERRUPTED"' SIGINT
-trap 'post_update_to_api "failed" "TERMINATED"' SIGTERM
+trap 'post_update_to_api "failed" "130"' SIGINT
+trap 'post_update_to_api "failed" "143"' SIGTERM
+trap 'post_update_to_api "failed" "129"; exit 129' SIGHUP
 function error_handler() {
   local exit_code="$?"
   local line_number="$1"
   local command="$2"
   local error_message="${RD}[ERROR]${CL} in line ${RD}$line_number${CL}: exit code ${RD}$exit_code${CL}: while executing command ${YW}$command${CL}"
-  post_update_to_api "failed" "${command}"
+  post_update_to_api "failed" "${exit_code}"
   echo -e "\n$error_message\n"
   cleanup_vmid
 }
@@ -104,8 +105,16 @@ function cleanup_vmid() {
 }
 
 function cleanup() {
+  local exit_code=$?
   popd >/dev/null
-  post_update_to_api "done" "none"
+  # Only send telemetry if post_to_api_vm was called (installing status was sent)
+  if [[ "${POST_TO_API_DONE:-}" == "true" && "${POST_UPDATE_DONE:-}" != "true" ]]; then
+    if [[ $exit_code -eq 0 ]]; then
+      post_update_to_api "done" "none"
+    else
+      post_update_to_api "failed" "$exit_code"
+    fi
+  fi
   rm -rf $TEMP_DIR
 }
 
@@ -143,7 +152,7 @@ function check_root() {
 }
 
 # This function checks the version of Proxmox Virtual Environment (PVE) and exits if the version is not supported.
-# Supported: Proxmox VE 8.0.x – 8.9.x and 9.0 (NOT 9.1+)
+# Supported: Proxmox VE 8.0.x – 8.9.x, 9.0 and 9.1
 pve_check() {
   local PVE_VER
   PVE_VER="$(pveversion | awk -F'/' '{print $2}' | awk -F'-' '{print $1}')"
@@ -154,26 +163,26 @@ pve_check() {
     if ((MINOR < 0 || MINOR > 9)); then
       msg_error "This version of Proxmox VE is not supported."
       msg_error "Supported: Proxmox VE version 8.0 – 8.9"
-      exit 1
+      exit 105
     fi
     return 0
   fi
 
-  # Check for Proxmox VE 9.x: allow ONLY 9.0
+  # Check for Proxmox VE 9.x: allow 9.0 and 9.1
   if [[ "$PVE_VER" =~ ^9\.([0-9]+) ]]; then
     local MINOR="${BASH_REMATCH[1]}"
-    if ((MINOR != 0)); then
-      msg_error "This version of Proxmox VE is not yet supported."
-      msg_error "Supported: Proxmox VE version 9.0"
-      exit 1
+    if ((MINOR < 0 || MINOR > 1)); then
+      msg_error "This version of Proxmox VE is not supported."
+      msg_error "Supported: Proxmox VE version 9.0 – 9.1"
+      exit 105
     fi
     return 0
   fi
 
   # All other unsupported versions
   msg_error "This version of Proxmox VE is not supported."
-  msg_error "Supported versions: Proxmox VE 8.0 – 8.x or 9.0"
-  exit 1
+  msg_error "Supported versions: Proxmox VE 8.0 – 8.x or 9.0 – 9.1"
+  exit 105
 }
 
 function arch_check() {
@@ -203,6 +212,69 @@ function exit-script() {
   clear
   echo -e "\n${CROSS}${RD}User exited script${CL}\n"
   exit
+}
+
+# Ensure pv is installed or abort with instructions
+function ensure_pv() {
+  if ! command -v pv &>/dev/null; then
+    msg_info "Installing required package: pv"
+    if ! apt-get update -qq &>/dev/null || ! apt-get install -y pv &>/dev/null; then
+      msg_error "Failed to install pv automatically."
+      echo -e "\nPlease run manually on the Proxmox host:\n  apt install pv\n"
+      exit 237
+    fi
+    msg_ok "Installed pv"
+  fi
+}
+
+# Download an .xz file and validate it
+# Args: $1=url $2=cache_file
+function download_and_validate_xz() {
+  local url="$1"
+  local file="$2"
+
+  # If file exists, check validity
+  if [[ -s "$file" ]]; then
+    if xz -t "$file" &>/dev/null; then
+      msg_ok "Using cached image $(basename "$file")"
+      return 0
+    else
+      msg_error "Cached file $(basename "$file") is corrupted. Deleting and retrying download..."
+      rm -f "$file"
+    fi
+  fi
+
+  # Download fresh file
+  msg_info "Downloading image: $(basename "$file")"
+  if ! curl -fSL -o "$file" "$url"; then
+    msg_error "Download failed: $url"
+    rm -f "$file"
+    exit 115
+  fi
+
+  # Validate again
+  if ! xz -t "$file" &>/dev/null; then
+    msg_error "Downloaded file $(basename "$file") is corrupted. Please try again later."
+    rm -f "$file"
+    exit 115
+  fi
+  msg_ok "Downloaded and validated $(basename "$file")"
+}
+
+# Extract .xz with pv
+# Args: $1=cache_file $2=target_img
+function extract_xz_with_pv() {
+  set -o pipefail
+  local file="$1"
+  local target="$2"
+
+  msg_info "Decompressing $(basename "$file") to $target"
+  if ! xz -dc "$file" | pv -N "Extracting" >"$target"; then
+    msg_error "Failed to extract $file"
+    rm -f "$target"
+    exit 115
+  fi
+  msg_ok "Decompressed to $target"
 }
 
 function default_settings() {
@@ -448,8 +520,8 @@ check_root
 arch_check
 pve_check
 ssh_check
+ensure_pv
 start_script
-
 post_to_api_vm
 
 msg_info "Validating Storage"
@@ -498,27 +570,15 @@ FILE_IMG="/var/lib/vz/template/tmp/${CACHE_FILE##*/%.xz}" # .qcow2
 mkdir -p "$CACHE_DIR" "$(dirname "$FILE_IMG")"
 msg_ok "${CL}${BL}${URL}${CL}"
 
-if [[ ! -s "$CACHE_FILE" ]]; then
-  curl -f#SL -o "$CACHE_FILE" "$URL"
-  msg_ok "Downloaded ${CL}${BL}$(basename "$CACHE_FILE")${CL}"
-else
-  msg_ok "Using cached image ${CL}${BL}$(basename "$CACHE_FILE")${CL}"
-fi
+download_and_validate_xz "$URL" "$CACHE_FILE"
 
-if ! command -v pv &>/dev/null; then
-  apt-get update -qq &>/dev/null && apt-get install -y pv &>/dev/null
-fi
-
-set -o pipefail
 msg_info "Creating Home Assistant OS VM shell"
-qm create "$VMID" -machine q35 -bios ovmf -agent 1 -tablet 0 -localtime 1 ${CPU_TYPE} \
+qm create $VMID -machine q35 -bios ovmf -agent 1 -tablet 0 -localtime 1 ${CPU_TYPE} \
   -cores "$CORE_COUNT" -memory "$RAM_SIZE" -name "$HN" -tags community-script \
   -net0 "virtio,bridge=$BRG,macaddr=$MAC$VLAN$MTU" -onboot 1 -ostype l26 -scsihw virtio-scsi-pci >/dev/null
 msg_ok "Created VM shell"
 
-msg_info "Decompressing $(basename "$CACHE_FILE") to $FILE_IMG"
-xz -dc "$CACHE_FILE" | pv -N "Extracting" >"$FILE_IMG"
-msg_ok "Decompressed to $FILE_IMG"
+extract_xz_with_pv "$CACHE_FILE" "$FILE_IMG"
 
 msg_info "Importing disk into storage ($STORAGE)"
 if qm disk import --help >/dev/null 2>&1; then
@@ -532,23 +592,23 @@ DISK_REF="$(printf '%s\n' "$IMPORT_OUT" | sed -n "s/.*successfully imported disk
 [[ -z "$DISK_REF" ]] && {
   msg_error "Unable to determine imported disk reference."
   echo "$IMPORT_OUT"
-  exit 1
+  exit 226
 }
 msg_ok "Imported disk (${CL}${BL}${DISK_REF}${CL})"
 
 rm -f "$FILE_IMG"
 
 msg_info "Attaching EFI and root disk"
-qm set "$VMID" \
-  --efidisk0 "${STORAGE}:0,efitype=4m" \
-  --scsi0 "${DISK_REF},ssd=1,discard=on" \
+qm set $VMID \
+  --efidisk0 ${STORAGE}:0,efitype=4m \
+  --scsi0 ${DISK_REF},ssd=1,discard=on \
   --boot order=scsi0 \
   --serial0 socket >/dev/null
-qm set "$VMID" --agent enabled=1 >/dev/null
+qm set $VMID --agent enabled=1 >/dev/null
 msg_ok "Attached EFI and root disk"
 
 msg_info "Resizing disk to $DISK_SIZE"
-qm resize "$VMID" scsi0 "${DISK_SIZE}" >/dev/null
+qm resize $VMID scsi0 ${DISK_SIZE} >/dev/null
 msg_ok "Resized disk"
 
 DESCRIPTION=$(
@@ -581,7 +641,7 @@ DESCRIPTION=$(
 </div>
 EOF
 )
-qm set "$VMID" -description "$DESCRIPTION" >/dev/null
+qm set $VMID -description "$DESCRIPTION" >/dev/null
 msg_ok "Created Homeassistant OS VM ${CL}${BL}(${HN})"
 
 if whiptail --backtitle "Proxmox VE Helper Scripts" --title "Image Cache" \
@@ -598,4 +658,4 @@ if [ "$START_VM" == "yes" ]; then
   msg_ok "Started Home Assistant OS VM"
 fi
 post_update_to_api "done" "none"
-msg_ok "Completed Successfully!\n"
+msg_ok "Completed successfully!\n"

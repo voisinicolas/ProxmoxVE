@@ -1,6 +1,7 @@
+import { ArrowRightIcon, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { Sparkles } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import React from "react";
 
 import type { Category, Script } from "@/lib/types";
@@ -36,19 +37,24 @@ export function formattedBadge(type: string) {
   return null;
 }
 
-// random Script
-function getRandomScript(categories: Category[]): Script | null {
+function getRandomScript(categories: Category[], previouslySelected: Set<string> = new Set()): Script | null {
   const allScripts = categories.flatMap(cat => cat.scripts || []);
   if (allScripts.length === 0)
     return null;
-  const idx = Math.floor(Math.random() * allScripts.length);
-  return allScripts[idx];
+
+  const availableScripts = allScripts.filter(script => !previouslySelected.has(script.slug));
+  if (availableScripts.length === 0) {
+    return allScripts[Math.floor(Math.random() * allScripts.length)];
+  }
+  const idx = Math.floor(Math.random() * availableScripts.length);
+  return availableScripts[idx];
 }
 
-export default function CommandMenu() {
+function CommandMenu() {
   const [open, setOpen] = React.useState(false);
   const [links, setLinks] = React.useState<Category[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);
+  const [selectedScripts, setSelectedScripts] = React.useState<Set<string>>(new Set());
   const router = useRouter();
 
   const fetchSortedCategories = () => {
@@ -65,25 +71,26 @@ export default function CommandMenu() {
   };
 
   React.useEffect(() => {
-    const down = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         fetchSortedCategories();
         setOpen(open => !open);
       }
     };
-    document.addEventListener("keydown", down);
-    return () => document.removeEventListener("keydown", down);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const openRandomScript = async () => {
+  const handleOpenRandomScript = async () => {
     if (links.length === 0) {
       setIsLoading(true);
       try {
         const categories = await fetchCategories();
         setLinks(categories);
-        const randomScript = getRandomScript(categories);
+        const randomScript = getRandomScript(categories, selectedScripts);
         if (randomScript) {
+          setSelectedScripts(prev => new Set([...prev, randomScript.slug]));
           router.push(`/scripts?id=${randomScript.slug}`);
         }
       }
@@ -92,12 +99,53 @@ export default function CommandMenu() {
       }
     }
     else {
-      const randomScript = getRandomScript(links);
+      const randomScript = getRandomScript(links, selectedScripts);
       if (randomScript) {
+        setSelectedScripts(prev => new Set([...prev, randomScript.slug]));
         router.push(`/scripts?id=${randomScript.slug}`);
       }
     }
   };
+
+  const getUniqueScriptsMap = React.useCallback(() => {
+    const scriptMap = new Map<string, { script: Script; categoryName: string }>();
+    for (const category of links) {
+      for (const script of category.scripts) {
+        if (!scriptMap.has(script.slug)) {
+          scriptMap.set(script.slug, { script, categoryName: category.name });
+        }
+      }
+    }
+    return scriptMap;
+  }, [links]);
+
+  const getUniqueScriptsByCategory = React.useCallback(() => {
+    const scriptMap = getUniqueScriptsMap();
+    const categoryOrder = links.map(cat => cat.name);
+    const grouped: Record<string, Script[]> = {};
+
+    for (const name of categoryOrder) {
+      grouped[name] = [];
+    }
+
+    for (const { script, categoryName } of scriptMap.values()) {
+      if (grouped[categoryName]) {
+        grouped[categoryName].push(script);
+      }
+      else {
+        grouped[categoryName] = [script];
+      }
+    }
+
+    Object.keys(grouped).forEach((cat) => {
+      if (grouped[cat].length === 0)
+        delete grouped[cat];
+    });
+
+    return grouped;
+  }, [getUniqueScriptsMap, links]);
+
+  const uniqueScriptsByCategory = getUniqueScriptsByCategory();
 
   return (
     <>
@@ -122,7 +170,20 @@ export default function CommandMenu() {
         <TooltipProvider>
           <Tooltip delayDuration={100}>
             <TooltipTrigger asChild>
-              <Button variant="outline" size="icon" onClick={openRandomScript} disabled={isLoading} className="hidden lg:flex">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleOpenRandomScript}
+                disabled={isLoading}
+                className="hidden lg:flex"
+                aria-label="Open Random Script"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    handleOpenRandomScript();
+                  }
+                }}
+              >
                 <Sparkles className="size-4" />
                 <span className="sr-only">Open Random Script</span>
               </Button>
@@ -134,20 +195,65 @@ export default function CommandMenu() {
         </TooltipProvider>
       </div>
 
-      <CommandDialog open={open} onOpenChange={setOpen}>
+      <CommandDialog
+        open={open}
+        onOpenChange={setOpen}
+        filter={(value: string, search: string) => {
+          const searchLower = search.toLowerCase().trim();
+          if (!searchLower)
+            return 1;
+          const valueLower = value.toLowerCase();
+          const searchWords = searchLower.split(/\s+/).filter(Boolean);
+          // All search words must appear somewhere in the value (name + description)
+          const allWordsMatch = searchWords.every((word: string) => valueLower.includes(word));
+          return allWordsMatch ? 1 : 0;
+        }}
+      >
         <DialogTitle className="sr-only">Search scripts</DialogTitle>
         <CommandInput placeholder="Search for a script..." />
         <CommandList>
-          <CommandEmpty>{isLoading ? "Loading..." : "No scripts found."}</CommandEmpty>
-          {links.map(category => (
-            <CommandGroup key={`category:${category.name}`} heading={category.name}>
-              {category.scripts.map(script => (
+          <CommandEmpty>
+            {isLoading
+              ? (
+                  "Searching..."
+                )
+              : (
+                  <div className="flex flex-col items-center justify-center py-6 text-center">
+                    <p className="text-sm text-muted-foreground">No scripts match your search.</p>
+                    <div className="mt-4">
+                      <p className="text-xs text-muted-foreground mb-2">Want to add a new script?</p>
+                      <Button variant="outline" size="sm" asChild>
+                        <Link
+                          href={`https://github.com/community-scripts/${basePath}/tree/main/docs/contribution/GUIDE.md`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Documentation
+                          {" "}
+                          <ArrowRightIcon className="ml-2 h-4 w-4" />
+                        </Link>
+                      </Button>
+                    </div>
+                  </div>
+                )}
+          </CommandEmpty>
+          {Object.entries(uniqueScriptsByCategory).map(([categoryName, scripts]) => (
+            <CommandGroup key={`category:${categoryName}`} heading={categoryName}>
+              {scripts.map(script => (
                 <CommandItem
                   key={`script:${script.slug}`}
-                  value={`${script.slug}-${script.name}`}
+                  value={`${script.name} ${script.type} ${script.description || ""}`}
                   onSelect={() => {
                     setOpen(false);
                     router.push(`/scripts?id=${script.slug}`);
+                  }}
+                  tabIndex={0}
+                  aria-label={`Open script ${script.name}`}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      setOpen(false);
+                      router.push(`/scripts?id=${script.slug}`);
+                    }
                   }}
                 >
                   <div className="flex gap-2" onClick={() => setOpen(false)}>
@@ -172,3 +278,5 @@ export default function CommandMenu() {
     </>
   );
 }
+
+export default CommandMenu;
