@@ -3617,16 +3617,16 @@ build_container() {
 $PCT_OPTIONS_STRING"
   fi
 
-  # Add storage if specified
+  # Add searchdomain if specified
   if [ -n "$SD" ]; then
     PCT_OPTIONS_STRING="$PCT_OPTIONS_STRING
-  -searchdomain $SD"
+  $SD"
   fi
 
   # Add nameserver if specified
   if [ -n "$NS" ]; then
     PCT_OPTIONS_STRING="$PCT_OPTIONS_STRING
-  -nameserver $NS"
+  $NS"
   fi
 
   # Network configuration
