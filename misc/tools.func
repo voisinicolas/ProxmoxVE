@@ -7999,7 +7999,7 @@ EOF
 # ------------------------------------------------------------------------------
 function fetch_and_deploy_from_url() {
   local url="$1"
-  local directory="$2"
+  local directory="${2:-}"
 
   if [[ -z "$url" ]]; then
     msg_error "URL parameter is required"
