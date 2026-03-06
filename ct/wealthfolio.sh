@@ -29,7 +29,8 @@ function update_script() {
     exit
   fi
 
-  if check_for_gh_release "wealthfolio" "afadil/wealthfolio"; then
+  RELEASE="3.0.3"
+  if check_for_gh_release "wealthfolio" "afadil/wealthfolio" "${RELEASE}"; then
     msg_info "Stopping Service"
     systemctl stop wealthfolio
     msg_ok "Stopped Service"
@@ -39,7 +40,7 @@ function update_script() {
     cp /opt/wealthfolio/.env /opt/wealthfolio_env_backup
     msg_ok "Backed up Data"
 
-    CLEAN_INSTALL=1 fetch_and_deploy_gh_release "wealthfolio" "afadil/wealthfolio" "tarball"
+    CLEAN_INSTALL=1 fetch_and_deploy_gh_release "wealthfolio" "afadil/wealthfolio" "tarball" "v${RELEASE}"
 
     msg_info "Building Frontend (patience)"
     cd /opt/wealthfolio
