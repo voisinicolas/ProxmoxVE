@@ -4641,8 +4641,9 @@ Pin-Priority: 600
 EOF
 
   $STD apt update
-  $STD apt install -y rocm 2>/dev/null || {
-    msg_warn "ROCm meta-package install failed — trying minimal set"
+  # Install only runtime packages — full 'rocm' meta-package includes 15GB+ dev tools
+  $STD apt install -y rocm-opencl-runtime rocm-hip-runtime rocm-smi-lib 2>/dev/null || {
+    msg_warn "ROCm runtime install failed — trying minimal set"
     $STD apt install -y rocm-opencl-runtime rocm-smi-lib 2>/dev/null || msg_warn "ROCm minimal install also failed"
   }
 
