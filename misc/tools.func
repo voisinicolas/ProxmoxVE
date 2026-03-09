@@ -4576,7 +4576,7 @@ _setup_rocm() {
 
   msg_info "Installing ROCm ${ROCM_VERSION} compute stack"
 
-  # ROCm main repository
+  # ROCm main repository (userspace compute libs)
   setup_deb822_repo \
     "rocm" \
     "https://repo.radeon.com/rocm/rocm.gpg.key" \
@@ -4592,7 +4592,7 @@ _setup_rocm() {
   {
     echo ""
     echo "Types: deb"
-    echo "URIs: https://repo.radeon.com/amdgpu/${ROCM_VERSION}/ubuntu"
+    echo "URIs: https://repo.radeon.com/amdgpu/latest/ubuntu"
     echo "Suites: ${ROCM_REPO_CODENAME}"
     echo "Components: main"
     echo "Architectures: amd64"
