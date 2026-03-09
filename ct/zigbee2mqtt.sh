@@ -35,6 +35,7 @@ function update_script() {
     msg_ok "Stopped Service"
 
     msg_info "Creating Backup"
+    ensure_dependencies zstd
     mkdir -p /opt/{backups,z2m_backup}
     BACKUP_VERSION="$(<"$HOME/.zigbee2mqtt")"
     BACKUP_FILE="/opt/backups/${APP}_backup_${BACKUP_VERSION}.tar.zst"
