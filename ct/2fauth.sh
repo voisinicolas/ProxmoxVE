@@ -5,6 +5,7 @@ source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxV
 # License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
 # Source: https://docs.2fauth.app/ | Github: https://github.com/Bubka/2FAuth
 
+
 APP="2FAuth"
 var_tags="${var_tags:-2fa;authenticator}"
 var_cpu="${var_cpu:-1}"
