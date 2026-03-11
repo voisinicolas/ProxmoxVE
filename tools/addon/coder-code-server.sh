@@ -91,7 +91,7 @@ VERSION=$(curl -fsSL https://api.github.com/repos/coder/code-server/releases/lat
 msg_info "Installing Code-Server v${VERSION}"
 
 if [ -f ~/.config/code-server/config.yaml ]; then
-  existing_config = true
+  existing_config=true
 fi
 
 curl -fOL https://github.com/coder/code-server/releases/download/v"$VERSION"/code-server_"${VERSION}"_amd64.deb &>/dev/null
