@@ -1,4 +1,4 @@
-name: Delete PocketBase entry on script/JSON removal
+name: Set state to is_deleted in pocketbase
 
 on:
   push:
