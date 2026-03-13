@@ -58,6 +58,15 @@ function update_script() {
       "public" \
       "main"
     msg_ok "Migrated to new Plex repository (deb822)"
+  else
+    msg_info "Setting up Plex repository"
+    setup_deb822_repo \
+      "plexmediaserver" \
+      "https://downloads.plex.tv/plex-keys/PlexSign.v2.key" \
+      "https://repo.plex.tv/deb/" \
+      "public" \
+      "main"
+    msg_ok "Set up Plex repository"
   fi
   if [[ -f /usr/local/bin/plexupdate ]] || [[ -d /opt/plexupdate ]]; then
     msg_info "Removing legacy plexupdate"
