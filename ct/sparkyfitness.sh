@@ -79,7 +79,7 @@ function update_script() {
 
   [Install]
   WantedBy=multi-user.target
-  EOF
+EOF
     systemctl daemon-reload
     msg_ok "Refreshed SparkyFitness Service"
 
