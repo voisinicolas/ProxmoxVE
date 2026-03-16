@@ -76,7 +76,7 @@ EOF
   SOURCE_DIR=${STAGING_DIR}/image-source
   cd /tmp
   if [[ -f ~/.intel_version ]]; then
-    curl -fsSLO https://raw.githubusercontent.com/immich-app/immich/refs/heads/main/machine-learning/Dockerfile
+    curl_with_retry "https://raw.githubusercontent.com/immich-app/immich/refs/heads/main/machine-learning/Dockerfile" "Dockerfile"
     readarray -t INTEL_URLS < <(
       sed -n "/intel-[igc|opencl]/p" ./Dockerfile | awk '{print $3}'
       sed -n "/libigdgmm12/p" ./Dockerfile | awk '{print $3}'
@@ -85,7 +85,7 @@ EOF
     if [[ "$INTEL_RELEASE" != "$(cat ~/.intel_version)" ]]; then
       msg_info "Updating Intel iGPU dependencies"
       for url in "${INTEL_URLS[@]}"; do
-        curl -fsSLO "$url"
+        curl_with_retry "$url" "$(basename "$url")"
       done
       $STD apt-mark unhold libigdgmm12
       $STD apt install -y --allow-downgrades ./libigdgmm12*.deb

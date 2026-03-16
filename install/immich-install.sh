@@ -32,13 +32,13 @@ if [ -d /dev/dri ]; then
     $STD apt install -y --no-install-recommends patchelf
     tmp_dir=$(mktemp -d)
     $STD pushd "$tmp_dir"
-    curl -fsSLO https://raw.githubusercontent.com/immich-app/immich/refs/heads/main/machine-learning/Dockerfile
+    curl_with_retry "https://raw.githubusercontent.com/immich-app/immich/refs/heads/main/machine-learning/Dockerfile" "Dockerfile"
     readarray -t INTEL_URLS < <(
       sed -n "/intel-[igc|opencl]/p" ./Dockerfile | awk '{print $3}'
       sed -n "/libigdgmm12/p" ./Dockerfile | awk '{print $3}'
     )
     for url in "${INTEL_URLS[@]}"; do
-      curl -fsSLO "$url"
+      curl_with_retry "$url" "$(basename "$url")"
     done
     $STD apt install -y ./libigdgmm12*.deb
     rm ./libigdgmm12*.deb
@@ -383,10 +383,10 @@ ln -s "$UPLOAD_DIR" "$ML_DIR"/upload
 
 msg_info "Installing GeoNames data"
 cd "$GEO_DIR"
-curl -fsSLZ -O "https://download.geonames.org/export/dump/admin1CodesASCII.txt" \
-  -O "https://download.geonames.org/export/dump/admin2Codes.txt" \
-  -O "https://download.geonames.org/export/dump/cities500.zip" \
-  -O "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson"
+curl_with_retry "https://download.geonames.org/export/dump/admin1CodesASCII.txt" "admin1CodesASCII.txt"
+curl_with_retry "https://download.geonames.org/export/dump/admin2Codes.txt" "admin2Codes.txt"
+curl_with_retry "https://download.geonames.org/export/dump/cities500.zip" "cities500.zip"
+curl_with_retry "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson" "ne_10m_admin_0_countries.geojson"
 unzip -q cities500.zip
 date --iso-8601=seconds | tr -d "\n" >geodata-date.txt
 rm cities500.zip
