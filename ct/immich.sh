@@ -217,6 +217,7 @@ EOF
     chown -R immich:immich "$INSTALL_DIR"
     chown immich:immich ./uv.lock
     export VIRTUAL_ENV="${ML_DIR}"/ml-venv
+    export UV_HTTP_TIMEOUT=300
     if [[ -f ~/.openvino ]]; then
       ML_PYTHON="python3.13"
       msg_info "Pre-installing Python ${ML_PYTHON} for machine-learning"
@@ -227,7 +228,10 @@ EOF
       msg_ok "Pre-installed Python ${ML_PYTHON}"
       msg_info "Updating HW-accelerated machine-learning"
       $STD uv add --no-sync --optional openvino onnxruntime-openvino==1.24.1 --active -n -p "${ML_PYTHON}" --managed-python
-      $STD sudo --preserve-env=VIRTUAL_ENV -nu immich uv sync --extra openvino --no-dev --active --link-mode copy -n -p "${ML_PYTHON}" --managed-python
+      for attempt in $(seq 1 3); do
+        $STD sudo --preserve-env=VIRTUAL_ENV,UV_HTTP_TIMEOUT -nu immich uv sync --extra openvino --no-dev --active --link-mode copy -n -p "${ML_PYTHON}" --managed-python && break
+        [[ $attempt -lt 3 ]] && msg_warn "uv sync attempt $attempt failed, retrying..." && sleep 10
+      done
       patchelf --clear-execstack "${VIRTUAL_ENV}/lib/python3.13/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.cpython-313-x86_64-linux-gnu.so"
       msg_ok "Updated HW-accelerated machine-learning"
     else
@@ -239,7 +243,10 @@ EOF
       done
       msg_ok "Pre-installed Python ${ML_PYTHON}"
       msg_info "Updating machine-learning"
-      $STD sudo --preserve-env=VIRTUAL_ENV -nu immich uv sync --extra cpu --no-dev --active --link-mode copy -n -p "${ML_PYTHON}" --managed-python
+      for attempt in $(seq 1 3); do
+        $STD sudo --preserve-env=VIRTUAL_ENV,UV_HTTP_TIMEOUT -nu immich uv sync --extra cpu --no-dev --active --link-mode copy -n -p "${ML_PYTHON}" --managed-python && break
+        [[ $attempt -lt 3 ]] && msg_warn "uv sync attempt $attempt failed, retrying..." && sleep 10
+      done
       msg_ok "Updated machine-learning"
     fi
     cd "$SRC_DIR"
