@@ -134,8 +134,6 @@ EOF
       $STD sudo -u postgres psql -d immich -c "REINDEX INDEX clip_index;"
     fi
     ensure_dependencies ccache gcc-13 g++-13
-    export CC=gcc-13
-    export CXX=g++-13
 
     INSTALL_DIR="/opt/${APP}"
     UPLOAD_DIR="$(sed -n '/^IMMICH_MEDIA_LOCATION/s/[^=]*=//p' /opt/immich/.env)"

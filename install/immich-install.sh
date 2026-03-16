@@ -154,10 +154,8 @@ sed -i "s/^#shared_preload.*/shared_preload_libraries = 'vchord.so'/" /etc/postg
 systemctl restart postgresql.service
 PG_DB_NAME="immich" PG_DB_USER="immich" PG_DB_GRANT_SUPERUSER="true" PG_DB_SKIP_ALTER_ROLE="true" setup_postgresql_db
 
-msg_info "Installing GCC-13 (workaround for GCC-14 ICE on Trixie)"
+msg_info "Installing GCC-13 (available as fallback compiler)"
 $STD apt install -y gcc-13 g++-13
-export CC=gcc-13
-export CXX=g++-13
 msg_ok "Installed GCC-13"
 
 msg_warn "Compiling Custom Photo-processing Libraries (can take anywhere from 15min to 2h)"
