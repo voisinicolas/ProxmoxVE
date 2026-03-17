@@ -4676,16 +4676,9 @@ _setup_rocm() {
     return 0
   }
 
-  # AMDGPU driver repository (append to same keyring)
-  {
-    echo ""
-    echo "Types: deb"
-    echo "URIs: https://repo.radeon.com/amdgpu/latest/ubuntu"
-    echo "Suites: ${ROCM_REPO_CODENAME}"
-    echo "Components: main"
-    echo "Architectures: amd64"
-    echo "Signed-By: /etc/apt/keyrings/rocm.gpg"
-  } >>/etc/apt/sources.list.d/rocm.sources
+  # Note: The amdgpu/latest/ubuntu repo (kernel driver packages) is intentionally
+  # omitted — kernel drivers are managed by the Proxmox host, not the LXC container.
+  # Only the ROCm userspace compute stack is needed inside the container.
 
   # Pin ROCm packages to prefer radeon repo
   cat <<EOF >/etc/apt/preferences.d/rocm-pin-600
@@ -4694,7 +4687,26 @@ Pin: release o=repo.radeon.com
 Pin-Priority: 600
 EOF
 
-  $STD apt update || msg_warn "apt update failed (AMD repo may be temporarily unavailable) — continuing anyway"
+  # apt update with retry — repo.radeon.com CDN can be mid-sync (transient size mismatches).
+  # Run with ERR trap disabled so a transient failure does not abort the entire install.
+  local _apt_ok=0
+  for _attempt in 1 2 3; do
+    if (
+      set +e
+      apt-get update -qq 2>&1
+      exit $?
+    ) 2>/dev/null; then
+      _apt_ok=1
+      break
+    fi
+    msg_warn "apt update failed (attempt ${_attempt}/3) — AMD repo may be temporarily unavailable, retrying in 30s…"
+    sleep 30
+  done
+  if [[ $_apt_ok -eq 0 ]]; then
+    msg_warn "apt update still failing after 3 attempts — skipping ROCm install"
+    return 0
+  fi
+
   # Install only runtime packages — full 'rocm' meta-package includes 15GB+ dev tools
   $STD apt install -y rocm-opencl-runtime rocm-hip-runtime rocm-smi-lib 2>/dev/null || {
     msg_warn "ROCm runtime install failed — trying minimal set"
