@@ -138,15 +138,6 @@ WantedBy=multi-user.target
 EOF
       systemctl daemon-reload
     fi
-    cd /opt/termix
-    $STD node -e "
-      const Database = require('better-sqlite3');
-      try {
-        const db = new Database('data/db.sqlite');
-        db.prepare(\"UPDATE settings SET value = '127.0.0.1:4822' WHERE key = 'guac_url' AND value LIKE '%guacd%'\").run();
-        db.close();
-      } catch(e) {}
-    "
     msg_ok "Migrated Configuration"
 
     msg_info "Backing up Data"
