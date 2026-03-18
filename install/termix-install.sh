@@ -113,6 +113,13 @@ bind_host = 127.0.0.1
 bind_port = 4822
 EOF
 
+cat <<EOF >/opt/termix/.env
+NODE_ENV=production
+DATA_DIR=/opt/termix/data
+GUACD_HOST=127.0.0.1
+GUACD_PORT=4822
+EOF
+
 cat <<EOF >/etc/systemd/system/guacd.service
 [Unit]
 Description=Guacamole Proxy Daemon (guacd)
@@ -138,8 +145,7 @@ Wants=guacd.service
 Type=simple
 User=root
 WorkingDirectory=/opt/termix
-Environment=NODE_ENV=production
-Environment=DATA_DIR=/opt/termix/data
+EnvironmentFile=/opt/termix/.env
 ExecStart=/usr/bin/node /opt/termix/dist/backend/backend/starter.js
 Restart=on-failure
 RestartSec=5

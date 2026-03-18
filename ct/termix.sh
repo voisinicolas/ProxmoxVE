@@ -108,6 +108,47 @@ EOF
     systemctl stop termix
     msg_ok "Stopped Termix"
 
+    msg_info "Migrating Configuration"
+    if [[ ! -f /opt/termix/.env ]]; then
+      cat <<EOF >/opt/termix/.env
+NODE_ENV=production
+DATA_DIR=/opt/termix/data
+GUACD_HOST=127.0.0.1
+GUACD_PORT=4822
+EOF
+    fi
+    if ! grep -q "EnvironmentFile" /etc/systemd/system/termix.service 2>/dev/null; then
+      cat <<EOF >/etc/systemd/system/termix.service
+[Unit]
+Description=Termix Backend
+After=network.target guacd.service
+Wants=guacd.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/termix
+EnvironmentFile=/opt/termix/.env
+ExecStart=/usr/bin/node /opt/termix/dist/backend/backend/starter.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+      systemctl daemon-reload
+    fi
+    cd /opt/termix
+    $STD node -e "
+      const Database = require('better-sqlite3');
+      try {
+        const db = new Database('data/db.sqlite');
+        db.prepare(\"UPDATE settings SET value = '127.0.0.1:4822' WHERE key = 'guac_url' AND value LIKE '%guacd%'\").run();
+        db.close();
+      } catch(e) {}
+    "
+    msg_ok "Migrated Configuration"
+
     msg_info "Backing up Data"
     cp -r /opt/termix/data /opt/termix_data_backup
     cp -r /opt/termix/uploads /opt/termix_uploads_backup
