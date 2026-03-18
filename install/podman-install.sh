@@ -71,7 +71,7 @@ Restart=always
 WantedBy=default.target multi-user.target
 EOF
   systemctl daemon-reload
-  systemctl enable -q --now portainer
+  $STD systemctl start portainer
   msg_ok "Installed Portainer $PORTAINER_LATEST_VERSION"
 else
   read -r -p "${TAB3}Would you like to add the Portainer Agent? <y/N> " prompt
@@ -96,7 +96,7 @@ Restart=always
 WantedBy=default.target multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable -q --now portainer-agent
+    $STD systemctl start portainer-agent
     msg_ok "Installed Portainer Agent $PORTAINER_AGENT_LATEST_VERSION"
   fi
 fi
