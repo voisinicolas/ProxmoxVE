@@ -1980,6 +1980,47 @@ extract_version_from_json() {
 }
 
 # ------------------------------------------------------------------------------
+# Get latest GitHub tag (for repos that only publish tags, not releases).
+#
+# Usage:
+#   get_latest_gh_tag "owner/repo" [prefix]
+#
+# Arguments:
+#   $1 - GitHub repo (owner/repo)
+#   $2 - Optional prefix filter (e.g., "v" to only match tags starting with "v")
+#
+# Returns:
+#   Latest tag name (stdout), or returns 1 on failure
+# ------------------------------------------------------------------------------
+get_latest_gh_tag() {
+  local repo="$1"
+  local prefix="${2:-}"
+  local temp_file
+  temp_file=$(mktemp)
+
+  if ! github_api_call "https://api.github.com/repos/${repo}/tags?per_page=50" "$temp_file"; then
+    rm -f "$temp_file"
+    return 1
+  fi
+
+  local tag=""
+  if [[ -n "$prefix" ]]; then
+    tag=$(jq -r --arg p "$prefix" '[.[] | select(.name | startswith($p))][0].name // empty' "$temp_file")
+  else
+    tag=$(jq -r '.[0].name // empty' "$temp_file")
+  fi
+
+  rm -f "$temp_file"
+
+  if [[ -z "$tag" ]]; then
+    msg_error "No tags found for ${repo}"
+    return 1
+  fi
+
+  echo "$tag"
+}
+
+# ------------------------------------------------------------------------------
 # Get latest GitHub release version with fallback to tags
 # Usage: get_latest_github_release "owner/repo" [strip_v] [include_prerelease]
 # ------------------------------------------------------------------------------
