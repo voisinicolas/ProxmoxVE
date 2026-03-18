@@ -77,18 +77,15 @@ bind_port = 4822
 EOF
     fi
 
-    if [[ ! -f /etc/systemd/system/guacd.service ]]; then
+    if [[ ! -f /etc/systemd/system/guacd.service ]] || grep -q "Type=forking" /etc/systemd/system/guacd.service 2>/dev/null; then
       cat <<EOF >/etc/systemd/system/guacd.service
 [Unit]
 Description=Guacamole Proxy Daemon (guacd)
 After=network.target
 
 [Service]
-Type=forking
-ExecStart=/etc/init.d/guacd start
-ExecStop=/etc/init.d/guacd stop
-ExecReload=/etc/init.d/guacd restart
-PIDFile=/var/run/guacd.pid
+Type=simple
+ExecStart=/usr/local/sbin/guacd -f -b 127.0.0.1 -l 4822
 Restart=on-failure
 RestartSec=5
 

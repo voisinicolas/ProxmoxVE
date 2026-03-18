@@ -119,11 +119,8 @@ Description=Guacamole Proxy Daemon (guacd)
 After=network.target
 
 [Service]
-Type=forking
-ExecStart=/etc/init.d/guacd start
-ExecStop=/etc/init.d/guacd stop
-ExecReload=/etc/init.d/guacd restart
-PIDFile=/var/run/guacd.pid
+Type=simple
+ExecStart=/usr/local/sbin/guacd -f -b 127.0.0.1 -l 4822
 Restart=on-failure
 RestartSec=5
 
