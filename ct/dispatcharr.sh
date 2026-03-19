@@ -30,7 +30,7 @@ function update_script() {
   fi
 
   setup_uv
-  NODE_VERSION="24" setup_nodejs
+  NODE_VERSION="22" setup_nodejs
 
   # Fix for nginx not allowing large files
   if ! grep -q "client_max_body_size 100M;" /etc/nginx/sites-available/dispatcharr.conf; then

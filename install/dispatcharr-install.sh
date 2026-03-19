@@ -29,7 +29,7 @@ $STD apt install -y \
 msg_ok "Installed Dependencies"
 
 setup_uv
-NODE_VERSION="24" setup_nodejs
+NODE_VERSION="22" setup_nodejs
 PG_VERSION="16" setup_postgresql
 PG_DB_NAME="dispatcharr_db" PG_DB_USER="dispatcharr_usr" setup_postgresql_db
 fetch_and_deploy_gh_release "dispatcharr" "Dispatcharr/Dispatcharr" "tarball"
