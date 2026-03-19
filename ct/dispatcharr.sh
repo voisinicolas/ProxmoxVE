@@ -30,7 +30,7 @@ function update_script() {
   fi
 
   setup_uv
-  NODE_VERSION="22" setup_nodejs
+  NODE_VERSION="24" setup_nodejs
 
   # Fix for nginx not allowing large files
   if ! grep -q "client_max_body_size 100M;" /etc/nginx/sites-available/dispatcharr.conf; then
@@ -110,6 +110,8 @@ function update_script() {
 
     msg_info "Building Frontend"
     cd /opt/dispatcharr/frontend
+    node -e "const p=require('./package.json');p.overrides=p.overrides||{};p.overrides['webworkify-webpack']='2.1.3';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2));"
+    rm -f package-lock.json
     $STD npm install --no-audit --progress=false
     $STD npm run build
     msg_ok "Built Frontend"
