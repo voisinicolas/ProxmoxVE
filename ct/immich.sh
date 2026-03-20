@@ -97,7 +97,7 @@ EOF
       msg_ok "Updated Intel OpenVINO dependencies"
     fi
   fi
-  rm ./Dockerfile
+  rm -f ./Dockerfile
   if [[ -f ~/.immich_library_revisions ]]; then
     libraries=("libjxl" "libheif" "libraw" "imagemagick" "libvips")
     cd "$BASE_DIR"
