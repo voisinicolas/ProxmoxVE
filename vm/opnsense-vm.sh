@@ -421,30 +421,41 @@ function advanced_settings() {
     if [ -z "$VM_NAME" ]; then
       HN="OPNsense"
     else
-      HN=$(echo ${VM_NAME,,} | tr -d ' ')
+      HN=$(echo "${VM_NAME,,}" | tr -cs 'a-z0-9-' '-' | sed 's/^-//;s/-$//')
+      if [ "$HN" != "${VM_NAME,,}" ]; then
+        whiptail --backtitle "Proxmox VE Helper Scripts" --title "HOSTNAME ADJUSTED" --msgbox "Invalid characters detected. Hostname has been adjusted to:\n\n  $HN" 10 58
+      fi
     fi
     echo -e "${DGN}Using Hostname: ${BGN}$HN${CL}"
   else
     exit-script
   fi
 
-  if CORE_COUNT=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Allocate CPU Cores" 8 58 4 --title "CORE COUNT" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
-    if [ -z "$CORE_COUNT" ]; then
-      CORE_COUNT="2"
+  while true; do
+    if CORE_COUNT=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Allocate CPU Cores" 8 58 4 --title "CORE COUNT" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [ -z "$CORE_COUNT" ]; then CORE_COUNT="4"; fi
+      if [[ "$CORE_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+        echo -e "${DGN}Allocated Cores: ${BGN}$CORE_COUNT${CL}"
+        break
+      fi
+      whiptail --backtitle "Proxmox VE Helper Scripts" --title "INVALID INPUT" --msgbox "CPU Cores must be a positive integer (e.g., 4)." 8 58
+    else
+      exit-script
     fi
-    echo -e "${DGN}Allocated Cores: ${BGN}$CORE_COUNT${CL}"
-  else
-    exit-script
-  fi
+  done
 
-  if RAM_SIZE=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Allocate RAM in MiB" 8 58 8192 --title "RAM" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
-    if [ -z $RAM_SIZE ]; then
-      RAM_SIZE="8192"
+  while true; do
+    if RAM_SIZE=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Allocate RAM in MiB" 8 58 8192 --title "RAM" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [ -z "$RAM_SIZE" ]; then RAM_SIZE="8192"; fi
+      if [[ "$RAM_SIZE" =~ ^[1-9][0-9]*$ ]]; then
+        echo -e "${DGN}Allocated RAM: ${BGN}$RAM_SIZE${CL}"
+        break
+      fi
+      whiptail --backtitle "Proxmox VE Helper Scripts" --title "INVALID INPUT" --msgbox "RAM Size must be a positive integer in MiB (e.g., 8192)." 8 58
+    else
+      exit-script
     fi
-    echo -e "${DGN}Allocated RAM: ${BGN}$RAM_SIZE${CL}"
-  else
-    exit-script
-  fi
+  done
 
   if BRG=$(whiptail --backtitle "Proxmox VE Helper Scripts" --inputbox "Set a LAN Bridge" 8 58 vmbr0 --title "LAN BRIDGE" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
     if [ -z $BRG ]; then
