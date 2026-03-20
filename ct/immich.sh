@@ -94,10 +94,10 @@ EOF
       rm ./*.deb
       $STD apt-mark hold libigdgmm12
       dpkg-query -W -f='${Version}\n' intel-opencl-icd >~/.intel_version
+      rm -f ./Dockerfile
       msg_ok "Updated Intel OpenVINO dependencies"
     fi
   fi
-  rm -f ./Dockerfile
   if [[ -f ~/.immich_library_revisions ]]; then
     libraries=("libjxl" "libheif" "libraw" "imagemagick" "libvips")
     cd "$BASE_DIR"
