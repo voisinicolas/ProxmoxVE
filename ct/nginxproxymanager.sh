@@ -74,27 +74,32 @@ function update_script() {
     $STD apt remove -y openresty
     $STD apt autoremove -y
   fi
-  $STD apt install -y build-essential libpcre3-dev libssl-dev zlib1g-dev
+  local pcre_pkg="libpcre3-dev"
+  if grep -qE 'VERSION_ID="1[3-9]"' /etc/os-release 2>/dev/null; then
+    pcre_pkg="libpcre2-dev"
+  fi
+  $STD apt install -y build-essential "$pcre_pkg" libssl-dev zlib1g-dev
   msg_ok "Migrated to OpenResty from source"
 
   CLEAN_INSTALL=1 fetch_and_deploy_gh_release "openresty" "openresty/openresty" "prebuild" "latest" "/opt/openresty" "openresty-*.tar.gz"
 
-  msg_info "Building OpenResty"
-  cd /opt/openresty
-  $STD ./configure \
-    --with-http_v2_module \
-    --with-http_realip_module \
-    --with-http_stub_status_module \
-    --with-http_ssl_module \
-    --with-http_sub_module \
-    --with-http_auth_request_module \
-    --with-pcre-jit \
-    --with-stream \
-    --with-stream_ssl_module
-  $STD make -j"$(nproc)"
-  $STD make install
-  rm -rf /opt/openresty
-  cat <<'EOF' >/lib/systemd/system/openresty.service
+  if [[ -d /opt/openresty ]]; then
+    msg_info "Building OpenResty"
+    cd /opt/openresty
+    $STD ./configure \
+      --with-http_v2_module \
+      --with-http_realip_module \
+      --with-http_stub_status_module \
+      --with-http_ssl_module \
+      --with-http_sub_module \
+      --with-http_auth_request_module \
+      --with-pcre-jit \
+      --with-stream \
+      --with-stream_ssl_module
+    $STD make -j"$(nproc)"
+    $STD make install
+    rm -rf /opt/openresty
+    cat <<'EOF' >/lib/systemd/system/openresty.service
 [Unit]
 Description=The OpenResty Application Platform
 After=syslog.target network-online.target remote-fs.target nss-lookup.target
@@ -108,8 +113,9 @@ ExecStart=/usr/local/openresty/nginx/sbin/nginx -g 'daemon off;'
 [Install]
 WantedBy=multi-user.target
 EOF
-  systemctl daemon-reload
-  msg_ok "Built OpenResty"
+    systemctl daemon-reload
+    msg_ok "Built OpenResty"
+  fi
 
   msg_info "Setting up Environment"
   ln -sf /usr/bin/python3 /usr/bin/python
