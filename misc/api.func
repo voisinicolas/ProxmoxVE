@@ -664,7 +664,7 @@ post_to_api() {
 {
     "random_id": "${RANDOM_UUID}",
     "execution_id": "${EXECUTION_ID:-${RANDOM_UUID}}",
-    "type": "lxc",
+    "type": "${TELEMETRY_TYPE}",
     "nsapp": "${NSAPP:-unknown}",
     "status": "installing",
     "ct_type": ${CT_TYPE:-1},
