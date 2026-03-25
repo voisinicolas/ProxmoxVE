@@ -177,6 +177,8 @@ pveam update >/dev/null
 msg_ok "Updated LXC template list"
 
 # Build TurnKey selection menu dynamically from available templates
+# Requires gawk for regex capture groups in match()
+command -v gawk &>/dev/null || apt-get install -y gawk &>/dev/null
 declare -A TURNKEY_TEMPLATES
 TURNKEY_MENU=()
 MSG_MAX_LENGTH=0
@@ -185,7 +187,7 @@ while IFS=$'\t' read -r TEMPLATE_FILE TAG ITEM; do
   OFFSET=2
   ((${#ITEM} + OFFSET > MSG_MAX_LENGTH)) && MSG_MAX_LENGTH=$((${#ITEM} + OFFSET))
   TURNKEY_MENU+=("$TAG" "$ITEM " "OFF")
-done < <(pveam available -section turnkeylinux | awk '{
+done < <(pveam available -section turnkeylinux | gawk '{
   tpl = $2
   if (match(tpl, /debian-([0-9]+)-turnkey-([^_]+)_([^_]+)_/, m)) {
     app = m[2]; deb = m[1]; ver = m[3]
