@@ -94,7 +94,7 @@ expect "Administrator username" {
     send "community-scripts\r"
 }
 expect "Administrator email address" {
-    send "admin@community-scripts.com\r"
+    send "admin@community-scripts.org\r"
 }
 expect "Password" {
     send "community-scripts\r"
