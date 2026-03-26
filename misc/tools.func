@@ -7942,7 +7942,7 @@ function setup_uv() {
     return 1
   fi
 
-  $STD install -m 755 "$UV_BINARY" "$UV_BIN" || {
+  $STD /usr/bin/install -m 755 "$UV_BINARY" "$UV_BIN" || {
     msg_error "Failed to install uv binary"
     return 1
   }
