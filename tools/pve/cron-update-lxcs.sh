@@ -121,7 +121,7 @@ CONF
   fi
 
   (
-    crontab -l -u root 2>/dev/null | grep -v "${LOCAL_SCRIPT}"
+    crontab -l -u root 2>/dev/null | grep -v "${LOCAL_SCRIPT}" || true
     echo "${CRON_ENTRY}"
   ) | crontab -u root -
   ok "Added cron schedule: Every Sunday at midnight"
