@@ -28,11 +28,6 @@ function update_script() {
     exit
   fi
 
-  if [[ $(grep -E '^VERSION_ID=' /etc/os-release) == *"12"* ]]; then
-    msg_error "Wrong Debian version detected!"
-    msg_error "Please create a snapshot first. You must upgrade your LXC to Debian Trixie before updating. Visit: https://github.com/community-scripts/ProxmoxVE/discussions/7489"
-    exit
-  fi
 
   if command -v node &>/dev/null; then
     CURRENT_NODE_VERSION=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
