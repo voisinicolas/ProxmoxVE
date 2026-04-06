@@ -13,41 +13,43 @@ setting_up_container
 network_check
 update_os
 
-if [ -d /dev/dri ]; then
+if lscpu | grep -q 'GenuineIntel'; then
   echo ""
   echo ""
-  echo -e "🤖 ${BL}Immich Machine Learning Options${CL}"
+  echo -e "🤖 ${BL}Immich Machine-Learning Options${CL}"
   echo "─────────────────────────────────────────"
   echo "Please choose your machine-learning type:"
   echo ""
   echo " 1) CPU only (default)"
-  echo " 2) Intel OpenVINO (requires GPU passthrough)"
+  echo " 2) **NEW** Intel OpenVINO CPU or iGPU"
   echo ""
 
   read -r -p "${TAB3}Select machine-learning type [1]: " ML_TYPE
   ML_TYPE="${ML_TYPE:-1}"
   if [[ "$ML_TYPE" == "2" ]]; then
-    msg_info "Installing OpenVINO dependencies"
     touch ~/.openvino
     $STD apt install -y --no-install-recommends patchelf
-    tmp_dir=$(mktemp -d)
-    $STD pushd "$tmp_dir"
-    curl -fsSLO https://raw.githubusercontent.com/immich-app/immich/refs/heads/main/machine-learning/Dockerfile
-    readarray -t INTEL_URLS < <(
-      sed -n "/intel-[igc|opencl]/p" ./Dockerfile | awk '{print $3}'
-      sed -n "/libigdgmm12/p" ./Dockerfile | awk '{print $3}'
-    )
-    for url in "${INTEL_URLS[@]}"; do
-      curl -fsSLO "$url"
-    done
-    $STD apt install -y ./libigdgmm12*.deb
-    rm ./libigdgmm12*.deb
-    $STD apt install -y ./*.deb
-    $STD apt-mark hold libigdgmm12
-    $STD popd
-    rm -rf "$tmp_dir"
-    dpkg-query -W -f='${Version}\n' intel-opencl-icd >~/.intel_version
-    msg_ok "Installed OpenVINO dependencies"
+    if [[ -d /dev/dri ]]; then
+      msg_info "Installing Intel OpenVINO dependencies"
+      tmp_dir=$(mktemp -d)
+      $STD pushd "$tmp_dir"
+      curl_with_retry "https://raw.githubusercontent.com/immich-app/immich/refs/heads/main/machine-learning/Dockerfile" "Dockerfile"
+      readarray -t INTEL_URLS < <(
+        sed -n "/intel-[igc|opencl]/p" ./Dockerfile | awk '{print $3}'
+        sed -n "/libigdgmm12/p" ./Dockerfile | awk '{print $3}'
+      )
+      for url in "${INTEL_URLS[@]}"; do
+        curl_with_retry "$url" "$(basename "$url")"
+      done
+      $STD apt install -y ./libigdgmm12*.deb
+      rm ./libigdgmm12*.deb
+      $STD apt install -y ./*.deb
+      $STD apt-mark hold libigdgmm12
+      $STD popd
+      rm -rf "$tmp_dir"
+      dpkg-query -W -f='${Version}\n' intel-opencl-icd >~/.intel_version
+      msg_ok "Installed Intel OpenVINO dependencies"
+    fi
   fi
 fi
 
@@ -153,6 +155,10 @@ fetch_and_deploy_gh_release "VectorChord" "tensorchord/VectorChord" "binary" "${
 sed -i "s/^#shared_preload.*/shared_preload_libraries = 'vchord.so'/" /etc/postgresql/16/main/postgresql.conf
 systemctl restart postgresql.service
 PG_DB_NAME="immich" PG_DB_USER="immich" PG_DB_GRANT_SUPERUSER="true" PG_DB_SKIP_ALTER_ROLE="true" setup_postgresql_db
+
+msg_info "Installing GCC-13 (available as fallback compiler)"
+$STD apt install -y gcc-13 g++-13
+msg_ok "Installed GCC-13"
 
 msg_warn "Compiling Custom Photo-processing Libraries (can take anywhere from 15min to 2h)"
 LD_LIBRARY_PATH=/usr/local/lib
@@ -260,7 +266,7 @@ msg_ok "(4/5) Compiled imagemagick"
 
 msg_info "(5/5) Compiling libvips"
 SOURCE=$SOURCE_DIR/libvips
-: "${LIBVIPS_REVISION:=$(jq -cr '.revision' $BASE_DIR/server/sources/libvips.json)}"
+LIBVIPS_REVISION="0c9151a4f416d2f8ae20a755db218f6637050eec"
 $STD git clone https://github.com/libvips/libvips.git "$SOURCE"
 cd "$SOURCE"
 $STD git reset --hard "$LIBVIPS_REVISION"
@@ -289,8 +295,8 @@ ML_DIR="${APP_DIR}/machine-learning"
 GEO_DIR="${INSTALL_DIR}/geodata"
 mkdir -p {"${APP_DIR}","${UPLOAD_DIR}","${GEO_DIR}","${INSTALL_DIR}"/cache}
 
-fetch_and_deploy_gh_release "Immich" "immich-app/immich" "tarball" "v2.5.6" "$SRC_DIR"
-PNPM_VERSION="$(jq -r '.packageManager | split("@")[1]' ${SRC_DIR}/package.json)"
+fetch_and_deploy_gh_release "Immich" "immich-app/immich" "tarball" "v2.6.3" "$SRC_DIR"
+PNPM_VERSION="$(jq -r '.packageManager | split("@")[1] | split("+")[0]' ${SRC_DIR}/package.json)"
 NODE_VERSION="24" NODE_MODULE="pnpm@${PNPM_VERSION}" setup_nodejs
 
 msg_info "Installing Immich (patience)"
@@ -338,17 +344,41 @@ msg_ok "Installed Immich Server, Web and Plugin Components"
 
 cd "$SRC_DIR"/machine-learning
 $STD useradd -U -s /usr/sbin/nologin -r -M -d "$INSTALL_DIR" immich
-mkdir -p "$ML_DIR" && chown -R immich:immich "$INSTALL_DIR"
+mkdir -p "$ML_DIR"
+# chown excluding upload dir contents (may be a mount with restricted permissions)
+chown immich:immich "$INSTALL_DIR"
+find "$INSTALL_DIR" -maxdepth 1 -mindepth 1 ! -name upload -exec chown -R immich:immich {} +
+chown immich:immich "$UPLOAD_DIR" 2>/dev/null || true
 export VIRTUAL_ENV="${ML_DIR}/ml-venv"
+export UV_HTTP_TIMEOUT=300
 if [[ -f ~/.openvino ]]; then
-  msg_info "Installing HW-accelerated machine-learning"
-  $STD uv add --no-sync --optional openvino onnxruntime-openvino==1.24.1 --active -n -p python3.13 --managed-python
-  $STD sudo --preserve-env=VIRTUAL_ENV -nu immich uv sync --extra openvino --no-dev --active --link-mode copy -n -p python3.13 --managed-python
+  ML_PYTHON="python3.13"
+  msg_info "Pre-installing Python ${ML_PYTHON} for machine-learning"
+  for attempt in $(seq 1 3); do
+    $STD sudo --preserve-env=VIRTUAL_ENV -nu immich uv python install "${ML_PYTHON}" && break
+    [[ $attempt -lt 3 ]] && msg_warn "Python download attempt $attempt failed, retrying..." && sleep 5
+  done
+  msg_ok "Pre-installed Python ${ML_PYTHON}"
+  msg_info "Installing Intel OpenVINO machine-learning"
+  for attempt in $(seq 1 3); do
+    $STD sudo --preserve-env=VIRTUAL_ENV,UV_HTTP_TIMEOUT -nu immich uv sync --extra openvino --no-dev --active --link-mode copy -n -p "${ML_PYTHON}" --managed-python && break
+    [[ $attempt -lt 3 ]] && msg_warn "uv sync attempt $attempt failed, retrying..." && sleep 10
+  done
   patchelf --clear-execstack "${VIRTUAL_ENV}/lib/python3.13/site-packages/onnxruntime/capi/onnxruntime_pybind11_state.cpython-313-x86_64-linux-gnu.so"
-  msg_ok "Installed HW-accelerated machine-learning"
+  msg_ok "Installed Intel OpenVINO machine-learning"
 else
+  ML_PYTHON="python3.11"
+  msg_info "Pre-installing Python ${ML_PYTHON} for machine-learning"
+  for attempt in $(seq 1 3); do
+    $STD sudo --preserve-env=VIRTUAL_ENV -nu immich uv python install "${ML_PYTHON}" && break
+    [[ $attempt -lt 3 ]] && msg_warn "Python download attempt $attempt failed, retrying..." && sleep 5
+  done
+  msg_ok "Pre-installed Python ${ML_PYTHON}"
   msg_info "Installing machine-learning"
-  $STD sudo --preserve-env=VIRTUAL_ENV -nu immich uv sync --extra cpu --no-dev --active --link-mode copy -n -p python3.11 --managed-python
+  for attempt in $(seq 1 3); do
+    $STD sudo --preserve-env=VIRTUAL_ENV,UV_HTTP_TIMEOUT -nu immich uv sync --extra cpu --no-dev --active --link-mode copy -n -p "${ML_PYTHON}" --managed-python && break
+    [[ $attempt -lt 3 ]] && msg_warn "uv sync attempt $attempt failed, retrying..." && sleep 10
+  done
   msg_ok "Installed machine-learning"
 fi
 cd "$SRC_DIR"
@@ -365,10 +395,10 @@ ln -s "$UPLOAD_DIR" "$ML_DIR"/upload
 
 msg_info "Installing GeoNames data"
 cd "$GEO_DIR"
-curl -fsSLZ -O "https://download.geonames.org/export/dump/admin1CodesASCII.txt" \
-  -O "https://download.geonames.org/export/dump/admin2Codes.txt" \
-  -O "https://download.geonames.org/export/dump/cities500.zip" \
-  -O "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson"
+curl_with_retry "https://download.geonames.org/export/dump/admin1CodesASCII.txt" "admin1CodesASCII.txt"
+curl_with_retry "https://download.geonames.org/export/dump/admin2Codes.txt" "admin2Codes.txt"
+curl_with_retry "https://download.geonames.org/export/dump/cities500.zip" "cities500.zip"
+curl_with_retry "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson" "ne_10m_admin_0_countries.geojson"
 unzip -q cities500.zip
 date --iso-8601=seconds | tr -d "\n" >geodata-date.txt
 rm cities500.zip
@@ -443,8 +473,7 @@ User=immich
 Group=immich
 UMask=0077
 WorkingDirectory=${APP_DIR}
-EnvironmentFile=${INSTALL_DIR}/.env
-ExecStart=/usr/bin/node ${APP_DIR}/dist/main
+ExecStart=${APP_DIR}/bin/start.sh
 Restart=on-failure
 SyslogIdentifier=immich-web
 StandardOutput=append:/var/log/immich/web.log
@@ -474,7 +503,11 @@ StandardError=append:/var/log/immich/ml.log
 [Install]
 WantedBy=multi-user.target
 EOF
-chown -R immich:immich "$INSTALL_DIR" /var/log/immich
+chown -R immich:immich /var/log/immich
+# chown excluding upload dir contents (may be a mount with restricted permissions)
+chown immich:immich "$INSTALL_DIR"
+find "$INSTALL_DIR" -maxdepth 1 -mindepth 1 ! -name upload -exec chown -R immich:immich {} +
+chown immich:immich "$UPLOAD_DIR" 2>/dev/null || true
 systemctl enable -q --now immich-ml.service immich-web.service
 msg_ok "Modified user, created env file, scripts and services"
 

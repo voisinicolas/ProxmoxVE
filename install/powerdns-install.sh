@@ -41,7 +41,7 @@ $STD apt install -y \
 sed -i 's/^launch=$/# launch=/' /etc/powerdns/pdns.conf
 rm -f /etc/powerdns/pdns.d/bind.conf
 cat <<EOF >/etc/powerdns/pdns.d/gsqlite3.conf
-launch+=gsqlite3
+launch=gsqlite3
 gsqlite3-database=/opt/poweradmin/powerdns.db
 EOF
 msg_ok "Setup PowerDNS"
@@ -131,12 +131,13 @@ cat <<EOF >/etc/apache2/sites-enabled/poweradmin.conf
 </VirtualHost>
 EOF
 $STD a2enmod rewrite headers
-chown -R www-data:www-data /opt/poweradmin
+chown -R www-data:pdns /opt/poweradmin
+chmod 775 /opt/poweradmin
 chown pdns:pdns /opt/poweradmin/powerdns.db
 chmod 664 /opt/poweradmin/powerdns.db
 usermod -aG pdns www-data
 $STD systemctl restart pdns apache2
-msg_info "Created Service"
+msg_ok "Created Service"
 
 motd_ssh
 customize

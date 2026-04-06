@@ -173,10 +173,10 @@ get_current_ip() {
     # Check for Debian/Ubuntu (uses hostname -I)
     if grep -qE 'ID=debian|ID=ubuntu' /etc/os-release; then
       # Try IPv4 first
-      CURRENT_IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+      CURRENT_IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
       # Fallback to IPv6 if no IPv4
       if [[ -z "$CURRENT_IP" ]]; then
-        CURRENT_IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E ':' | head -n1)
+        CURRENT_IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E ':' | head -n1 || true)
       fi
     # Check for Alpine (uses ip command)
     elif grep -q 'ID=alpine' /etc/os-release; then
@@ -221,6 +221,14 @@ update_motd_ip() {
     local current_hostname="$(hostname)"
     local current_ip="$(hostname -I | awk '{print $1}')"
 
+    # Escape sed special chars in replacement strings (& \ |)
+    current_os="${current_os//\\/\\\\}"
+    current_os="${current_os//&/\\&}"
+    current_hostname="${current_hostname//\\/\\\\}"
+    current_hostname="${current_hostname//&/\\&}"
+    current_ip="${current_ip//\\/\\\\}"
+    current_ip="${current_ip//&/\\&}"
+
     # Update only if values actually changed
     if ! grep -q "OS:.*$current_os" "$PROFILE_FILE" 2>/dev/null; then
       sed -i "s|OS:.*|OS: \${GN}$current_os\${CL}\\\"|" "$PROFILE_FILE"
@@ -259,12 +267,12 @@ install_ssh_keys_into_ct() {
     msg_info "Installing selected SSH keys into CT ${CTID}"
     pct exec "$CTID" -- sh -c 'mkdir -p /root/.ssh && chmod 700 /root/.ssh' || {
       msg_error "prepare /root/.ssh failed"
-      return 1
+      return 252
     }
     pct push "$CTID" "$SSH_KEYS_FILE" /root/.ssh/authorized_keys >/dev/null 2>&1 ||
       pct exec "$CTID" -- sh -c "cat > /root/.ssh/authorized_keys" <"$SSH_KEYS_FILE" || {
       msg_error "write authorized_keys failed"
-      return 1
+      return 252
     }
     pct exec "$CTID" -- sh -c 'chmod 600 /root/.ssh/authorized_keys' || true
     msg_ok "Installed SSH keys into CT ${CTID}"
@@ -528,6 +536,10 @@ validate_gateway_in_subnet() {
   # Extract IP and CIDR
   local ip="${static_ip%%/*}"
   local cidr="${static_ip##*/}"
+
+  # /31 and /32 are valid point-to-point / zero-trust DMZ configurations
+  # where the gateway is technically outside the subnet — skip validation
+  ((cidr >= 31)) && return 0
 
   # Convert CIDR to netmask bits
   local mask=$((0xFFFFFFFF << (32 - cidr) & 0xFFFFFFFF))
@@ -827,7 +839,7 @@ choose_and_set_storage_for_file() {
   template) key="var_template_storage" ;;
   *)
     msg_error "Unknown storage class: $class"
-    return 1
+    return 65
     ;;
   esac
 
@@ -850,7 +862,7 @@ choose_and_set_storage_for_file() {
     fi
   else
     # If the current value is preselectable, we could show it, but per your requirement we always offer selection
-    select_storage "$class" || return 1
+    select_storage "$class" || return 150
   fi
 
   _write_storage_to_vars "$vf" "$key" "$STORAGE_RESULT"
@@ -974,19 +986,31 @@ base_settings() {
 
   # Runtime check: Verify APT cacher is reachable if configured
   if [[ -n "$APT_CACHER_IP" && "$APT_CACHER" == "yes" ]]; then
-    if ! curl -s --connect-timeout 2 "http://${APT_CACHER_IP}:3142" >/dev/null 2>&1; then
-      msg_warn "APT Cacher configured but not reachable at ${APT_CACHER_IP}:3142"
+    local _check_host _check_port _check_url
+    _check_host=$(echo "$APT_CACHER_IP" | sed -e 's|https\?://||' -e 's|/.*||' | cut -d: -f1)
+    _check_port=$(echo "$APT_CACHER_IP" | sed -e 's|https\?://||' -e 's|/.*||' | cut -s -d: -f2)
+    if [[ "$APT_CACHER_IP" =~ ^https?:// ]]; then
+      _check_url="$APT_CACHER_IP"
+      _check_port="${_check_port:-80}"
+    else
+      _check_port="${_check_port:-3142}"
+      _check_url="http://${APT_CACHER_IP}:${_check_port}"
+    fi
+    if ! curl -s --connect-timeout 2 "${_check_url}" >/dev/null 2>&1; then
+      msg_warn "APT Cacher configured but not reachable at ${_check_url}"
       msg_custom "⚠️" "${YW}" "Disabling APT Cacher for this installation"
       APT_CACHER=""
       APT_CACHER_IP=""
     else
-      msg_ok "APT Cacher verified at ${APT_CACHER_IP}:3142"
+      msg_ok "APT Cacher verified at ${_check_url}"
     fi
   fi
 
   MTU=${var_mtu:-""}
-  SD=${var_searchdomain:-""}
-  NS=${var_ns:-""}
+  _sd_val="${var_searchdomain:-""}"
+  [[ -n "$_sd_val" ]] && SD="-searchdomain=$_sd_val" || SD=""
+  _ns_val="${var_ns:-""}"
+  [[ -n "$_ns_val" ]] && NS="-nameserver=$_ns_val" || NS=""
   MAC=${var_mac:-""}
   VLAN=${var_vlan:-""}
   SSH=${var_ssh:-"no"}
@@ -1032,8 +1056,8 @@ load_vars_file() {
   local VAR_WHITELIST=(
     var_apt_cacher var_apt_cacher_ip var_brg var_cpu var_disk var_fuse var_gpu var_keyctl
     var_gateway var_hostname var_ipv6_method var_mac var_mknod var_mount_fs var_mtu
-    var_net var_nesting var_ns var_protection var_pw var_ram var_tags var_timezone var_tun var_unprivileged
-    var_verbose var_vlan var_ssh var_ssh_authorized_key var_container_storage var_template_storage var_searchdomain
+    var_net var_nesting var_ns var_os var_protection var_pw var_ram var_tags var_timezone var_tun var_unprivileged
+    var_verbose var_version var_vlan var_ssh var_ssh_authorized_key var_container_storage var_template_storage var_searchdomain
   )
 
   # Whitelist check helper
@@ -1185,6 +1209,25 @@ load_vars_file() {
             continue
           fi
           ;;
+        var_apt_cacher_ip)
+          # Allow: plain IP/hostname, http://host, https://host:port
+          if [[ -n "$var_val" ]] && ! [[ "$var_val" =~ ^(https?://)?[a-zA-Z0-9._-]+(:[0-9]+)?(/.*)?$ ]]; then
+            msg_warn "Invalid APT Cacher address '$var_val' in $file, ignoring"
+            continue
+          fi
+          ;;
+        var_container_storage | var_template_storage)
+          # Validate that the storage exists and is active on the current node
+          local _storage_status
+          _storage_status=$(pvesm status 2>/dev/null | awk -v s="$var_val" '$1 == s { print $3 }')
+          if [[ -z "$_storage_status" ]]; then
+            msg_warn "Storage '$var_val' from $file not found on this node, ignoring"
+            continue
+          elif [[ "$_storage_status" == "disabled" ]]; then
+            msg_warn "Storage '$var_val' from $file is disabled on this node, ignoring"
+            continue
+          fi
+          ;;
         esac
       fi
 
@@ -1214,8 +1257,8 @@ default_var_settings() {
   local VAR_WHITELIST=(
     var_apt_cacher var_apt_cacher_ip var_brg var_cpu var_disk var_fuse var_gpu var_keyctl
     var_gateway var_hostname var_ipv6_method var_mac var_mknod var_mount_fs var_mtu
-    var_net var_nesting var_ns var_protection var_pw var_ram var_tags var_timezone var_tun var_unprivileged
-    var_verbose var_vlan var_ssh var_ssh_authorized_key var_container_storage var_template_storage
+    var_net var_nesting var_ns var_os var_protection var_pw var_ram var_tags var_timezone var_tun var_unprivileged
+    var_verbose var_version var_vlan var_ssh var_ssh_authorized_key var_container_storage var_template_storage
   )
 
   # Snapshot: environment variables (highest precedence)
@@ -1238,7 +1281,7 @@ default_var_settings() {
         return 0
       }
     done
-    return 1
+    return 252
   }
   # Allow override of storages via env (for non-interactive use cases)
   [ -n "${var_template_storage:-}" ] && TEMPLATE_STORAGE="$var_template_storage"
@@ -1285,9 +1328,11 @@ var_ipv6_method=none
 var_ssh=no
 # var_ssh_authorized_key=
 
-# APT cacher (optional - with example)
+# APT cacher (optional - IP or URL)
 # var_apt_cacher=yes
 # var_apt_cacher_ip=192.168.1.10
+# var_apt_cacher_ip=http://proxy.local
+# var_apt_cacher_ip=https://proxy.local:443
 
 # Features/Tags/verbosity
 var_fuse=no
@@ -1331,7 +1376,7 @@ EOF
   local dv
   dv="$(_find_default_vars)" || {
     msg_error "default.vars not found after ensure step"
-    return 1
+    return 252
   }
   load_vars_file "$dv"
 
@@ -1376,8 +1421,8 @@ if ! declare -p VAR_WHITELIST >/dev/null 2>&1; then
   declare -ag VAR_WHITELIST=(
     var_apt_cacher var_apt_cacher_ip var_brg var_cpu var_disk var_fuse var_gpu
     var_gateway var_hostname var_ipv6_method var_mac var_mtu
-    var_net var_ns var_pw var_ram var_tags var_tun var_unprivileged
-    var_verbose var_vlan var_ssh var_ssh_authorized_key var_container_storage var_template_storage
+    var_net var_ns var_os var_pw var_ram var_tags var_tun var_unprivileged
+    var_verbose var_version var_vlan var_ssh var_ssh_authorized_key var_container_storage var_template_storage
   )
 fi
 
@@ -1549,6 +1594,8 @@ _build_current_app_vars_tmp() {
     echo "# Generated on $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     echo
 
+    echo "var_os=$(_sanitize_value "${var_os:-}")"
+    echo "var_version=$(_sanitize_value "${var_version:-}")"
     echo "var_unprivileged=$(_sanitize_value "$_unpriv")"
     echo "var_cpu=$(_sanitize_value "$_cpu")"
     echo "var_ram=$(_sanitize_value "$_ram")"
@@ -1614,7 +1661,7 @@ maybe_offer_save_app_defaults() {
     if whiptail --backtitle "Proxmox VE Helper Scripts" \
       --yesno "Save these advanced settings as defaults for ${APP}?\n\nThis will create:\n${app_vars_path}" 12 72; then
       mkdir -p "$(dirname "$app_vars_path")"
-      install -m 0644 "$new_tmp" "$app_vars_path"
+      /usr/bin/install -m 0644 "$new_tmp" "$app_vars_path"
       msg_ok "Saved app defaults: ${app_vars_path}"
     fi
     rm -f "$new_tmp" "$diff_tmp"
@@ -1648,7 +1695,7 @@ maybe_offer_save_app_defaults() {
 
     case "$sel" in
     "Update Defaults")
-      install -m 0644 "$new_tmp" "$app_vars_path"
+      /usr/bin/install -m 0644 "$new_tmp" "$app_vars_path"
       msg_ok "Updated app defaults: ${app_vars_path}"
       break
       ;;
@@ -1676,8 +1723,8 @@ ensure_storage_selection_for_vars_file() {
 
   # Read stored values (if any)
   local tpl ct
-  tpl=$(grep -E '^var_template_storage=' "$vf" | cut -d= -f2-)
-  ct=$(grep -E '^var_container_storage=' "$vf" | cut -d= -f2-)
+  tpl=$(grep -E '^var_template_storage=' "$vf" | cut -d= -f2- || true)
+  ct=$(grep -E '^var_container_storage=' "$vf" | cut -d= -f2- || true)
 
   if [[ -n "$tpl" && -n "$ct" ]]; then
     TEMPLATE_STORAGE="$tpl"
@@ -1812,7 +1859,7 @@ advanced_settings() {
     if [[ -n "$BRIDGES" ]]; then
       while IFS= read -r bridge; do
         if [[ -n "$bridge" ]]; then
-          local description=$(grep -A 10 "iface $bridge" /etc/network/interfaces 2>/dev/null | grep '^#' | head -n1 | sed 's/^#\s*//;s/^[- ]*//')
+          local description=$(grep -A 10 "iface $bridge" /etc/network/interfaces 2>/dev/null | grep '^#' | head -n1 | sed 's/^#\s*//;s/^[- ]*//' || true)
           BRIDGE_MENU_OPTIONS+=("$bridge" "${description:- }")
         fi
       done <<<"$BRIDGES"
@@ -1851,7 +1898,7 @@ advanced_settings() {
 
     # ═══════════════════════════════════════════════════════════════════════════
     # STEP 2: Root Password
-    # ════════════════════════════════════════════════════════════════════════���══
+    # ════════════════════════════════════════���═══════════════════════════════���══
     2)
       if PW1=$(whiptail --backtitle "Proxmox VE Helper Scripts [Step $STEP/$MAX_STEP]" \
         --title "ROOT PASSWORD" \
@@ -2498,7 +2545,7 @@ advanced_settings() {
         # Ask for IP if enabled
         if result=$(whiptail --backtitle "Proxmox VE Helper Scripts [Step $STEP/$MAX_STEP]" \
           --title "APT CACHER IP" \
-          --inputbox "\nEnter APT Cacher-NG server IP address:" 10 58 "$_apt_cacher_ip" \
+          --inputbox "\nEnter APT Cacher-NG IP or URL:\n(e.g. 192.168.1.10, http://host, https://host:443)" 12 62 "$_apt_cacher_ip" \
           3>&1 1>&2 2>&3); then
           _apt_cacher_ip="$result"
         fi
@@ -3049,6 +3096,15 @@ install_script() {
       header_info
       CHOICE=""
       ;;
+    generated | GENERATED)
+      header_info
+      echo -e "${DEFAULT}${BOLD}${BL}Using Generated Settings on node $PVEHOST_NAME${CL}"
+      VERBOSE="no"
+      METHOD="generated"
+      base_settings "$VERBOSE"
+      echo_default
+      break
+      ;;
     *)
       msg_error "Invalid option: $CHOICE"
       exit 112
@@ -3285,7 +3341,7 @@ configure_ssh_settings() {
       tag="${tag%\"}"
       tag="${tag#\"}"
       local line
-      line=$(grep -E "^${tag}\|" "$MAPFILE" | head -n1 | cut -d'|' -f2-)
+      line=$(grep -E "^${tag}\|" "$MAPFILE" | head -n1 | cut -d'|' -f2- || true)
       [[ -n "$line" ]] && printf '%s\n' "$line" >>"$SSH_KEYS_FILE"
     done
     ;;
@@ -3312,7 +3368,7 @@ configure_ssh_settings() {
             tag="${tag%\"}"
             tag="${tag#\"}"
             local line
-            line=$(grep -E "^${tag}\|" "$MAPFILE" | head -n1 | cut -d'|' -f2-)
+            line=$(grep -E "^${tag}\|" "$MAPFILE" | head -n1 | cut -d'|' -f2- || true)
             [[ -n "$line" ]] && printf '%s\n' "$line" >>"$SSH_KEYS_FILE"
           done
         else
@@ -3493,6 +3549,7 @@ build_container() {
   # Gateway
   if [[ -n "$GATE" ]]; then
     case "$GATE" in
+    ,gw=) ;;
     ,gw=*) NET_STRING+="$GATE" ;;
     *) NET_STRING+=",gw=$GATE" ;;
     esac
@@ -3519,8 +3576,10 @@ build_container() {
   auto) NET_STRING="$NET_STRING,ip6=auto" ;;
   dhcp) NET_STRING="$NET_STRING,ip6=dhcp" ;;
   static)
-    NET_STRING="$NET_STRING,ip6=$IPV6_ADDR"
-    [ -n "$IPV6_GATE" ] && NET_STRING="$NET_STRING,gw6=$IPV6_GATE"
+    if [[ -n "$IPV6_ADDR" ]]; then
+      NET_STRING="$NET_STRING,ip6=$IPV6_ADDR"
+      [ -n "$IPV6_GATE" ] && NET_STRING="$NET_STRING,gw6=$IPV6_GATE"
+    fi
     ;;
   none) ;;
   esac
@@ -3617,16 +3676,16 @@ build_container() {
 $PCT_OPTIONS_STRING"
   fi
 
-  # Add storage if specified
+  # Add searchdomain if specified
   if [ -n "$SD" ]; then
     PCT_OPTIONS_STRING="$PCT_OPTIONS_STRING
-  -searchdomain $SD"
+  $SD"
   fi
 
   # Add nameserver if specified
   if [ -n "$NS" ]; then
     PCT_OPTIONS_STRING="$PCT_OPTIONS_STRING
-  -nameserver $NS"
+  $NS"
   fi
 
   # Network configuration
@@ -3920,6 +3979,17 @@ EOF
   configure_gpu_passthrough
   configure_additional_devices
 
+  # Increase disk size for AMD ROCm runtime (~4GB extra needed)
+  if [[ "${GPU_TYPE:-}" == "AMD" ]]; then
+    local rocm_extra=4
+    local new_disk_size=$((PCT_DISK_SIZE + rocm_extra))
+    if pct resize "$CTID" rootfs "${new_disk_size}G" >/dev/null 2>&1; then
+      msg_ok "Disk resized ${PCT_DISK_SIZE}GB → ${new_disk_size}GB for ROCm"
+    else
+      msg_warn "Failed to resize disk for ROCm — installation may fail if space is insufficient"
+    fi
+  fi
+
   # ============================================================================
   # START CONTAINER AND INSTALL USERLAND
   # ============================================================================
@@ -4000,7 +4070,7 @@ EOF
   # Fix Debian 13 LXC template bug where / is owned by nobody:nogroup
   # This must be done from the host as unprivileged containers cannot chown /
   local rootfs
-  rootfs=$(pct config "$CTID" | grep -E '^rootfs:' | sed 's/rootfs: //' | cut -d',' -f1)
+  rootfs=$(pct config "$CTID" | grep -E '^rootfs:' | sed 's/rootfs: //' | cut -d',' -f1 || true)
   if [[ -n "$rootfs" ]]; then
     local mount_point="/var/lib/lxc/${CTID}/rootfs"
     if [[ -d "$mount_point" ]] && [[ "$(stat -c '%U' "$mount_point")" != "root" ]]; then
@@ -4034,17 +4104,42 @@ EOF
   if [ "$var_os" == "alpine" ]; then
     sleep 3
     pct exec "$CTID" -- /bin/sh -c 'cat <<EOF >/etc/apk/repositories
-http://dl-cdn.alpinelinux.org/alpine/latest-stable/main
-http://dl-cdn.alpinelinux.org/alpine/latest-stable/community
+https://dl-cdn.alpinelinux.org/alpine/latest-stable/main
+https://dl-cdn.alpinelinux.org/alpine/latest-stable/community
 EOF'
     pct exec "$CTID" -- ash -c "apk add bash newt curl openssh nano mc ncurses jq" >>"$BUILD_LOG" 2>&1 || {
-      msg_error "Failed to install base packages in Alpine container"
-      install_exit_code=1
+      msg_warn "apk install failed (dl-cdn.alpinelinux.org), trying alternate mirrors..."
+      local alpine_exit=0
+      pct exec "$CTID" -- ash -c '
+        ALPINE_MIRRORS="mirror.init7.net ftp.halifax.rwth-aachen.de mirrors.edge.kernel.org alpine.mirror.wearetriple.com mirror.leaseweb.com uk.alpinelinux.org dl-2.alpinelinux.org dl-4.alpinelinux.org"
+        for m in $(printf "%s\n" $ALPINE_MIRRORS | shuf); do
+          if wget -q --spider --timeout=2 "http://$m/alpine/latest-stable/main/" 2>/dev/null; then
+            echo "  Attempting mirror: $m"
+            cat <<EOF >/etc/apk/repositories
+http://$m/alpine/latest-stable/main
+http://$m/alpine/latest-stable/community
+EOF
+            if apk update >/dev/null 2>&1 && apk add bash newt curl openssh nano mc ncurses jq >/dev/null 2>&1; then
+              echo "  CDN set to $m: tests passed"
+              exit 0
+            else
+              echo "  Mirror $m failed"
+            fi
+          fi
+        done
+        exit 2
+      ' && alpine_exit=0 || alpine_exit=$?
+      if [[ $alpine_exit -ne 0 ]]; then
+        msg_error "Failed to install base packages in Alpine container"
+        install_exit_code=1
+      fi
     }
   else
     sleep 3
     LANG=${LANG:-en_US.UTF-8}
-    pct exec "$CTID" -- bash -c "sed -i \"/$LANG/ s/^# //\" /etc/locale.gen"
+    local LANG_ESC="${LANG//./\\.}"
+    LANG_ESC="${LANG_ESC//|/\\|}"
+    pct exec "$CTID" -- bash -c "sed -i \"/$LANG_ESC/ s/^# //\" /etc/locale.gen"
     pct exec "$CTID" -- bash -c "locale_line=\$(grep -v '^#' /etc/locale.gen | grep -E '^[a-zA-Z]' | awk '{print \$1}' | head -n 1) && \
     echo LANG=\$locale_line >/etc/default/locale && \
     locale-gen >/dev/null && \
@@ -4063,9 +4158,140 @@ EOF'
       msg_warn "Skipping timezone setup – zone '$tz' not found in container"
     fi
 
+    # Detect broken DNS resolver (e.g. Tailscale MagicDNS) and inject public DNS
+    if ! pct exec "$CTID" -- bash -c "getent hosts deb.debian.org >/dev/null 2>&1 && getent hosts archive.ubuntu.com >/dev/null 2>&1"; then
+      msg_warn "APT repository DNS resolution failed in container, injecting public DNS servers"
+      pct exec "$CTID" -- bash -c "echo -e 'nameserver 8.8.8.8\nnameserver 1.1.1.1' >/etc/resolv.conf"
+    fi
+
     pct exec "$CTID" -- bash -c "apt-get update 2>&1 && apt-get install -y sudo curl mc gnupg2 jq 2>&1" >>"$BUILD_LOG" 2>&1 || {
-      msg_error "apt-get base packages installation failed"
-      install_exit_code=1
+      local failed_mirror
+      failed_mirror=$(pct exec "$CTID" -- bash -c "grep -m1 -oP '(?<=URIs: https?://)[^/]+' /etc/apt/sources.list.d/debian.sources 2>/dev/null || grep -m1 -oP '(?<=deb https?://)[^/]+' /etc/apt/sources.list 2>/dev/null" 2>/dev/null || echo "unknown")
+      msg_warn "apt-get update failed (${failed_mirror}), trying alternate mirrors..."
+      local mirror_exit=0
+      pct exec "$CTID" -- bash -c '
+        APT_BASE="sudo curl mc gnupg2 jq"
+        DISTRO=$(. /etc/os-release 2>/dev/null && echo "$ID" || echo "debian")
+
+        if [ "$DISTRO" = "ubuntu" ]; then
+          EU_MIRRORS="de.archive.ubuntu.com fr.archive.ubuntu.com se.archive.ubuntu.com nl.archive.ubuntu.com it.archive.ubuntu.com ch.archive.ubuntu.com mirrors.xtom.de"
+          US_MIRRORS="us.archive.ubuntu.com archive.ubuntu.com mirrors.edge.kernel.org mirror.csclub.uwaterloo.ca mirrors.ocf.berkeley.edu mirror.math.princeton.edu"
+          AP_MIRRORS="au.archive.ubuntu.com jp.archive.ubuntu.com kr.archive.ubuntu.com tw.archive.ubuntu.com mirror.aarnet.edu.au"
+        else
+          EU_MIRRORS="ftp.de.debian.org ftp.fr.debian.org ftp.nl.debian.org ftp.uk.debian.org ftp.ch.debian.org ftp.se.debian.org ftp.it.debian.org ftp.fau.de ftp.halifax.rwth-aachen.de debian.mirror.lrz.de mirror.init7.net debian.ethz.ch mirrors.dotsrc.org debian.mirrors.ovh.net"
+          US_MIRRORS="ftp.us.debian.org ftp.ca.debian.org debian.csail.mit.edu mirrors.ocf.berkeley.edu mirrors.wikimedia.org debian.osuosl.org mirror.cogentco.com"
+          AP_MIRRORS="ftp.au.debian.org ftp.jp.debian.org ftp.tw.debian.org ftp.kr.debian.org ftp.hk.debian.org ftp.sg.debian.org mirror.aarnet.edu.au mirror.nitc.ac.in"
+        fi
+
+        TZ=$(cat /etc/timezone 2>/dev/null || echo "UTC")
+        case "$TZ" in
+          Europe/*|Arctic/*) REGIONAL="$EU_MIRRORS"; OTHERS="$US_MIRRORS $AP_MIRRORS" ;;
+          America/*) REGIONAL="$US_MIRRORS"; OTHERS="$EU_MIRRORS $AP_MIRRORS" ;;
+          Asia/*|Australia/*|Pacific/*) REGIONAL="$AP_MIRRORS"; OTHERS="$EU_MIRRORS $US_MIRRORS" ;;
+          *) REGIONAL=""; OTHERS="$EU_MIRRORS $US_MIRRORS $AP_MIRRORS" ;;
+        esac
+
+        echo "Acquire::By-Hash \"no\";" >/etc/apt/apt.conf.d/99no-by-hash
+
+        try_mirrors() {
+          for src in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do
+            [ -f "$src" ] && sed -i "s|URIs: http[s]*://[^/]*/|URIs: http://${1}/|g; s|deb http[s]*://[^/]*/|deb http://${1}/|g" "$src"
+          done
+          rm -rf /var/lib/apt/lists/*
+          APT_OUT=$(apt-get update 2>&1)
+          APT_RC=$?
+          if echo "$APT_OUT" | grep -qi "hashsum\|hash sum"; then
+            echo "  Mirror $1 failed (hash mismatch)"
+            return 1
+          elif echo "$APT_OUT" | grep -qi "SSL\|certificate"; then
+            echo "  Mirror $1 failed (SSL/certificate error)"
+            return 1
+          elif [ $APT_RC -ne 0 ]; then
+            echo "  Mirror $1 failed (apt-get update error)"
+            return 1
+          elif apt-get install -y $APT_BASE >/dev/null 2>&1; then
+            echo "  CDN set to $1: tests passed"
+            return 0
+          else
+            echo "  Mirror $1 failed (package install error)"
+            return 1
+          fi
+        }
+
+        scan_reachable() {
+          local result=""
+          for m in $1; do
+            if timeout 2 bash -c "echo >/dev/tcp/$m/80" 2>/dev/null; then
+              result="$result $m"
+            fi
+          done
+          echo "$result" | xargs
+        }
+
+        # Phase 1: Scan global mirrors first (independent of local CDN issues)
+        OTHERS_OK=$(scan_reachable "$OTHERS")
+        OTHERS_PICK=$(printf "%s\n" $OTHERS_OK | shuf | head -3 | xargs)
+
+        for mirror in $OTHERS_PICK; do
+          echo "  Attempting mirror: $mirror"
+          try_mirrors "$mirror" && exit 0
+        done
+
+        # Phase 2: Try primary mirror
+        if [ "$DISTRO" = "ubuntu" ]; then
+          PRIMARY="archive.ubuntu.com"
+        else
+          PRIMARY="ftp.debian.org"
+        fi
+        if timeout 2 bash -c "echo >/dev/tcp/$PRIMARY/80" 2>/dev/null; then
+          echo "  Attempting mirror: $PRIMARY"
+          try_mirrors "$PRIMARY" && exit 0
+        fi
+
+        # Phase 3: Fall back to regional mirrors
+        REGIONAL_OK=$(scan_reachable "$REGIONAL")
+        REGIONAL_PICK=$(printf "%s\n" $REGIONAL_OK | shuf | head -3 | xargs)
+
+        for mirror in $REGIONAL_PICK; do
+          echo "  Attempting mirror: $mirror"
+          try_mirrors "$mirror" && exit 0
+        done
+
+        exit 2
+      ' && mirror_exit=0 || mirror_exit=$?
+      if [[ $mirror_exit -eq 2 ]]; then
+        msg_warn "Multiple mirrors failed (possible CDN synchronization issue)."
+        if [[ "$var_os" == "ubuntu" ]]; then
+          msg_warn "Find Ubuntu mirrors at: https://launchpad.net/ubuntu/+archivemirrors"
+        else
+          msg_warn "Find Debian mirrors at: https://www.debian.org/mirror/list"
+        fi
+        local custom_mirror=""
+        while true; do
+          read -rp "  Enter a mirror hostname (or 'skip' to abort): " custom_mirror </dev/tty
+          [[ -z "$custom_mirror" ]] && continue
+          [[ "$custom_mirror" == "skip" ]] && break
+          [[ ! "$custom_mirror" =~ ^[a-zA-Z0-9._-]+$ ]] && {
+            msg_warn "Invalid hostname format."
+            continue
+          }
+          pct exec "$CTID" -- bash -c "
+            for src in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do
+              [ -f \"\$src\" ] && sed -i \"s|URIs: http[s]*://[^/]*/|URIs: http://${custom_mirror}/|g; s|deb http[s]*://[^/]*/|deb http://${custom_mirror}/|g\" \"\$src\"
+            done
+            rm -rf /var/lib/apt/lists/*
+            apt-get update >/dev/null 2>&1 && apt-get install -y sudo curl mc gnupg2 jq >/dev/null 2>&1
+          " && break
+          msg_warn "Mirror '${custom_mirror}' also failed. Try another or type 'skip'."
+        done
+        if [[ "$custom_mirror" == "skip" ]]; then
+          msg_error "apt-get base packages installation failed"
+          install_exit_code=1
+        fi
+      elif [[ $mirror_exit -ne 0 ]]; then
+        msg_error "apt-get base packages installation failed"
+        install_exit_code=1
+      fi
     }
   fi
 
@@ -4174,6 +4400,53 @@ EOF'
       fi
     fi
 
+    # Defense-in-depth: Ensure error handling stays disabled during recovery.
+    # Some functions (e.g. silent/$STD) unconditionally re-enable set -Eeuo pipefail
+    # and trap 'error_handler' ERR. If any code path above called such a function,
+    # the grep/sed pipelines below would trigger error_handler on non-match (exit 1).
+    set +Eeuo pipefail
+    trap - ERR
+
+    # --- Exit code 1 subclassification: analyze logs BEFORE telemetry call ---
+    # Exit code 1 is generic ("General error"). Analyze logs to determine the
+    # real error category so telemetry gets a useful classification instead of "shell".
+    local is_oom=false
+    local is_network_issue=false
+    local is_apt_issue=false
+    local is_cmd_not_found=false
+    local is_disk_full=false
+
+    if [[ $install_exit_code -eq 1 && -f "$combined_log" ]]; then
+      if grep -qiE 'E: Unable to|E: Package|E: Failed to fetch|dpkg.*error|broken packages|unmet dependencies|dpkg --configure -a' "$combined_log"; then
+        is_apt_issue=true
+      fi
+      if grep -qiE 'Cannot allocate memory|Out of memory|oom-killer|Killed process|JavaScript heap' "$combined_log"; then
+        is_oom=true
+      fi
+      if grep -qiE 'Could not resolve|DNS|Connection refused|Network is unreachable|No route to host|Temporary failure resolving|Failed to fetch' "$combined_log"; then
+        is_network_issue=true
+      fi
+      if grep -qiE ': command not found|No such file or directory.*/s?bin/' "$combined_log"; then
+        is_cmd_not_found=true
+      fi
+      if grep -qiE 'ENOSPC|no space left on device|Disk quota exceeded|errno -28' "$combined_log"; then
+        is_disk_full=true
+      fi
+    fi
+
+    # Set override for categorize_error() so telemetry gets the real category
+    if [[ "$is_apt_issue" == true ]]; then
+      export ERROR_CATEGORY_OVERRIDE="dependency"
+    elif [[ "$is_oom" == true ]]; then
+      export ERROR_CATEGORY_OVERRIDE="resource"
+    elif [[ "$is_network_issue" == true ]]; then
+      export ERROR_CATEGORY_OVERRIDE="network"
+    elif [[ "$is_disk_full" == true ]]; then
+      export ERROR_CATEGORY_OVERRIDE="storage"
+    elif [[ "$is_cmd_not_found" == true ]]; then
+      export ERROR_CATEGORY_OVERRIDE="dependency"
+    fi
+
     # Report failure to telemetry API (now with log available on host)
     # NOTE: Do NOT use msg_info/spinner here — the background spinner process
     # causes SIGTSTP in non-interactive shells (bash -c "$(curl ...)"), which
@@ -4181,13 +4454,6 @@ EOF'
     $STD echo -e "${TAB}⏳ Reporting failure to telemetry..."
     post_update_to_api "failed" "$install_exit_code"
     $STD echo -e "${TAB}${CM:-✔} Failure reported"
-
-    # Defense-in-depth: Ensure error handling stays disabled during recovery.
-    # Some functions (e.g. silent/$STD) unconditionally re-enable set -Eeuo pipefail
-    # and trap 'error_handler' ERR. If any code path above called such a function,
-    # the grep/sed pipelines below would trigger error_handler on non-match (exit 1).
-    set +Eeuo pipefail
-    trap - ERR
 
     # Show combined log location
     if [[ -n "$CTID" && -n "${SESSION_ID:-}" ]]; then
@@ -4217,12 +4483,9 @@ EOF'
     # Prompt user for cleanup with 60s timeout
     echo ""
 
-    # Detect error type for smart recovery options
-    local is_oom=false
-    local is_network_issue=false
-    local is_apt_issue=false
-    local is_cmd_not_found=false
-    local is_disk_full=false
+    # Extend error detection for non-exit-1 codes (exit 1 was already analyzed above)
+    # The is_* flags were set above for exit code 1 log analysis; here we add
+    # exit-code-specific detections for other codes.
     local error_explanation=""
     if declare -f explain_exit_code >/dev/null 2>&1; then
       error_explanation="$(explain_exit_code "$install_exit_code")"
@@ -4271,26 +4534,6 @@ EOF'
       fi
       ;;
     esac
-
-    # Exit 1 subclassification: analyze logs to identify actual root cause
-    # Many exit 1 errors are actually APT, OOM, network, or command-not-found issues
-    if [[ $install_exit_code -eq 1 && -f "$combined_log" ]]; then
-      if grep -qiE 'E: Unable to|E: Package|E: Failed to fetch|dpkg.*error|broken packages|unmet dependencies|dpkg --configure -a' "$combined_log"; then
-        is_apt_issue=true
-      fi
-      if grep -qiE 'Cannot allocate memory|Out of memory|oom-killer|Killed process|JavaScript heap' "$combined_log"; then
-        is_oom=true
-      fi
-      if grep -qiE 'Could not resolve|DNS|Connection refused|Network is unreachable|No route to host|Temporary failure resolving|Failed to fetch' "$combined_log"; then
-        is_network_issue=true
-      fi
-      if grep -qiE ': command not found|No such file or directory.*/s?bin/' "$combined_log"; then
-        is_cmd_not_found=true
-      fi
-      if grep -qiE 'ENOSPC|no space left on device|Disk quota exceeded|errno -28' "$combined_log"; then
-        is_disk_full=true
-      fi
-    fi
 
     # Show error explanation if available
     if [[ -n "$error_explanation" ]]; then
@@ -4493,6 +4736,7 @@ EOF'
 
           if [[ $apt_retry_code -eq 0 ]]; then
             msg_ok "Installation completed successfully after APT repair!"
+            INSTALL_COMPLETE=true
             post_update_to_api "done" "0" "force"
             return 0
           else
@@ -4620,7 +4864,7 @@ EOF'
 destroy_lxc() {
   if [[ -z "$CT_ID" ]]; then
     msg_error "No CT_ID found. Nothing to remove."
-    return 1
+    return 65
   fi
 
   # Abort on Ctrl-C / Ctrl-D / ESC
@@ -4659,12 +4903,12 @@ resolve_storage_preselect() {
   case "$class" in
   template) required_content="vztmpl" ;;
   container) required_content="rootdir" ;;
-  *) return 1 ;;
+  *) return 65 ;;
   esac
   [[ -z "$preselect" ]] && return 1
   if ! pvesm status -content "$required_content" | awk 'NR>1{print $1}' | grep -qx -- "$preselect"; then
     msg_warn "Preselected storage '${preselect}' does not support content '${required_content}' (or not found)"
-    return 1
+    return 238
   fi
 
   local line total used free
@@ -4716,6 +4960,10 @@ fix_gpu_gids() {
   # Stop container to update config
   pct stop "$CTID" >/dev/null 2>&1
   sleep 1
+
+  # Validate GIDs are numeric before sed
+  [[ "$render_gid" =~ ^[0-9]+$ ]] || render_gid="104"
+  [[ "$video_gid" =~ ^[0-9]+$ ]] || video_gid="44"
 
   # Update dev entries with correct GIDs
   sed -i.bak -E "s|(dev[0-9]+: /dev/dri/renderD[0-9]+),gid=[0-9]+|\1,gid=${render_gid}|g" "$LXC_CONFIG"
@@ -4784,7 +5032,7 @@ select_storage() {
     ;;
   *)
     msg_error "Invalid storage class '$CLASS'"
-    return 1
+    return 65
     ;;
   esac
 
@@ -4866,7 +5114,7 @@ validate_storage_space() {
   # Check if storage exists and is active
   if [[ -z "$storage_line" ]]; then
     [[ "$show_dialog" == "yes" ]] && whiptail --msgbox "⚠️  Warning: Storage '$storage' not found!\n\nThe storage may be unavailable or disabled." 10 60
-    return 2
+    return 236
   fi
 
   # Check storage status (column 3)
@@ -4874,7 +5122,7 @@ validate_storage_space() {
   status=$(awk '{print $3}' <<<"$storage_line")
   if [[ "$status" == "disabled" ]]; then
     [[ "$show_dialog" == "yes" ]] && whiptail --msgbox "⚠️  Warning: Storage '$storage' is disabled!\n\nPlease enable the storage first." 10 60
-    return 2
+    return 236
   fi
 
   # Get storage type and free space (column 6)
@@ -4897,7 +5145,7 @@ validate_storage_space() {
     if [[ "$show_dialog" == "yes" ]]; then
       whiptail --msgbox "⚠️  Warning: Storage '$storage' may not have enough space!\n\nStorage Type: ${storage_type}\nRequired: ${required_gb}GB\nAvailable: ${free_gb_fmt}\n\nYou can continue, but creation might fail." 14 70
     fi
-    return 1
+    return 236
   fi
 
   return 0
@@ -4960,7 +5208,7 @@ create_lxc_container() {
       return 0
     fi
 
-    msg_info "An update for the Proxmox LXC stack is available"
+    msg_warn "An update for the Proxmox LXC stack is available"
     echo "  pve-container: installed=${_pvec_i:-n/a}  candidate=${_pvec_c:-n/a}"
     echo "  lxc-pve     : installed=${_lxcp_i:-n/a}  candidate=${_lxcp_c:-n/a}"
     echo
@@ -5068,7 +5316,7 @@ create_lxc_container() {
   fi
 
   msg_info "Validating storage '$CONTAINER_STORAGE'"
-  STORAGE_TYPE=$(grep -E "^[^:]+: $CONTAINER_STORAGE$" /etc/pve/storage.cfg | cut -d: -f1 | head -1)
+  STORAGE_TYPE=$(grep -E "^[^:]+: $CONTAINER_STORAGE$" /etc/pve/storage.cfg | cut -d: -f1 | head -1 || true)
 
   if [[ -z "$STORAGE_TYPE" ]]; then
     msg_error "Storage '$CONTAINER_STORAGE' not found in /etc/pve/storage.cfg"
@@ -5107,7 +5355,7 @@ create_lxc_container() {
   msg_ok "Storage '$CONTAINER_STORAGE' ($STORAGE_TYPE) validated"
 
   msg_info "Validating template storage '$TEMPLATE_STORAGE'"
-  TEMPLATE_TYPE=$(grep -E "^[^:]+: $TEMPLATE_STORAGE$" /etc/pve/storage.cfg | cut -d: -f1)
+  TEMPLATE_TYPE=$(grep -E "^[^:]+: $TEMPLATE_STORAGE$" /etc/pve/storage.cfg | cut -d: -f1 || true)
 
   if ! pvesm status -content vztmpl 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$TEMPLATE_STORAGE"; then
     msg_warn "Template storage '$TEMPLATE_STORAGE' may not support 'vztmpl'"
@@ -5630,7 +5878,7 @@ description() {
   DESCRIPTION=$(
     cat <<EOF
 <div align='center'>
-  <a href='https://Helper-Scripts.com' target='_blank' rel='noopener noreferrer'>
+  <a href='https://community-scripts.org' target='_blank' rel='noopener noreferrer'>
     <img src='https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/images/logo-81x112.png' alt='Logo' style='width:81px;height:112px;'/>
   </a>
 
@@ -5663,6 +5911,7 @@ EOF
     systemctl start ping-instances.service
   fi
 
+  INSTALL_COMPLETE=true
   post_update_to_api "done" "none"
 }
 
